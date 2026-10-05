@@ -1,0 +1,150 @@
+# ФСП — платформа обратного найма (MVP)
+
+Кандидат заполняет профиль, проходит тест и получает подтверждённую категорию
+(специализация + грейд). Работодатель описывает потребность, получает объяснимую
+подборку кандидатов и направляет приглашение с зарплатой. Контакты кандидата
+открываются работодателю **только после принятия приглашения**.
+
+Стек и решения зафиксированы в [`docs/decisions.md`](docs/decisions.md).
+Требования (FR/NFR/TC) отслеживаются в [`docs/requirements_trace.md`](docs/requirements_trace.md).
+
+## Что уже работает (этап «Основа» из ТЗ)
+
+- Регистрация с ролью `candidate` / `employer`, текстом и версией согласия (FR-01)
+- Подтверждение email одноразовой ссылкой 24 ч; повтор письма не чаще 1 раза в минуту (FR-02)
+- Вход/выход, серверные сессии в HttpOnly-cookie (≤24 ч), CSRF double-submit (FR-03, NFR-02)
+- Профиль кандидата: ФИО, контакты, стаж, роли, навыки, самооценка уровня, софт-скиллы,
+  приватность публикации, ID участника ФСП (FR-05, FR-04)
+- Профиль компании и рабочая потребность с допустимыми грейдами и навыками (FR-16, FR-17)
+- Справочники: отрасль IT, специализации (Python backend, системный анализ),
+  грейды (Junior, Middle), роли, навыки; тексты согласий (FR-07, FR-28)
+- Единый формат ошибок Problem Details (RFC 9457) с классами E01–E20
+  (каталог ошибок, FR-30)
+- Демо-аккаунты обеих ролей с подтверждённым email
+
+Дальше по этапам разработки: тест и категория, подбор, приглашения, PDF, адаптер ФСП —
+см. `docs/requirements_trace.md`.
+
+## Быстрый старт (Docker Compose)
+
+Требуется Docker Desktop (Windows) или Docker Engine + Compose.
+
+```bash
+docker compose up --build
+```
+
+После запуска:
+
+| Сервис | Адрес |
+|---|---|
+| Frontend (React + Vite) | http://localhost:5173 |
+| Backend API | http://localhost:8000 |
+| Swagger UI (OpenAPI) | http://localhost:8000/docs |
+| PostgreSQL | localhost:5433 (внутри сети `db:5432`) |
+
+API при старте сам применяет миграции (`alembic upgrade head`) и загружает справочники
+и демо-данные (`python -m app.db.seed`) — повторный запуск ничего не дублирует (FR-28).
+
+### Демо-доступы
+
+| Роль | Email | Пароль |
+|---|---|---|
+| Кандидат | `candidate@example.com` | `DemoPass2026!` |
+| Работодатель | `employer@example.com` | `DemoPass2026!` |
+
+### Сброс dev-базы (явная команда)
+
+```bash
+docker compose exec -T db psql -U fsp -d fsp -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+```
+
+Затем перезапустить API (он выполнит миграции и seed), либо выполнить вручную из `backend/`:
+
+```bash
+python -m alembic upgrade head
+python -m app.db.seed
+```
+
+## Запуск вручную (без Docker)
+
+Предполагается локальный PostgreSQL (например, на `localhost:5433`), Python ≥3.12, Node ≥20.
+
+```bash
+# 1. БД: создать пользователя/базу (пример через psql)
+#    CREATE USER fsp PASSWORD 'fsp'; CREATE DATABASE fsp OWNER fsp;
+
+# 2. Backend
+cd backend
+python -m venv .venv
+.venv\Scripts\activate            # Windows; Linux: source .venv/bin/activate
+pip install -e ".[dev]"
+set FSP_DATABASE_URL=postgresql+asyncpg://fsp:fsp@localhost:5433/fsp
+python -m alembic upgrade head
+python -m app.db.seed
+uvicorn app.main:app --reload --port 8000
+
+# 3. Frontend (в другом терминале)
+cd frontend
+npm install
+npm run dev                       # http://localhost:5173, прокси /api -> :8000
+```
+
+Все переменные окружения имеют префикс `FSP_` (см. [`backend/.env.example`](backend/.env.example)).
+
+## Почта (FR-02)
+
+- `FSP_MAIL_BACKEND=log` (по умолчанию) — письма печатаются в лог API, включая ссылку
+  подтверждения; подходит для разработки.
+- `FSP_MAIL_BACKEND=smtp` + `FSP_SMTP_HOST/PORT/USER/PASSWORD`, `FSP_MAIL_FROM`,
+  `FSP_CONFIRM_BASE_URL` — реальная доставка. Ошибка SMTP не подтверждает аккаунт (NFR-07).
+
+## Проверка работоспособности
+
+Быстрый smoke-тест основного пути обеих ролей (работает в памяти, без внешнего сервера):
+
+```bash
+cd backend
+set FSP_DATABASE_URL=postgresql+asyncpg://fsp:fsp@localhost:5433/fsp
+python scripts/smoke_test.py
+```
+
+Против живого сервера:
+
+```bash
+set SMOKE_BASE=http://localhost:8000
+python scripts/smoke_test.py
+```
+
+## Структура репозитория
+
+```
+Conditions/            # документация заказчика — НЕ публикуется (в .gitignore)
+docs/                  # решения, карта требований
+backend/
+  app/
+    core/              # конфиг, ошибки RFC 9457, безопасность
+    db/                # сессии БД, seed
+    models/            # SQLAlchemy-модели
+    schemas/           # Pydantic-схемы (валидация)
+    api/v1/            # роутеры auth, me, candidate, employer, references
+    services/          # бизнес-логика (auth, mail)
+  alembic/             # миграции
+  scripts/smoke_test.py
+  pyproject.toml
+frontend/
+  src/
+    api/               # клиент с CSRF и Problem Details
+    auth/              # контекст сессии, защита маршрутов
+    pages/             # вход/регистрация/подтверждение, кабинеты
+docker-compose.yml     # db + api + web
+```
+
+## Безопасность (уже в каркасе)
+
+- Пароли: Argon2id с уникальной солью; токены хранятся только хешированными (NFR-02)
+- Сессии: серверные, HttpOnly + SameSite=Lax, выход инвалидирует (NFR-02, D-06)
+- CSRF: double-submit для изменяющих запросов (NFR-02)
+- Права: роль, владелец ресурса и принадлежность компании проверяются на сервере
+  на каждом запросе (FR-03, NFR-01)
+- Ошибки: Problem Details RFC 9457, безопасные сообщения, request_id (FR-30, NFR-13)
+- Email-валидация: запрещены спец-домены (`.local`, `.test`), демо-адреса на `example.com`

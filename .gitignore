@@ -1,0 +1,41 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Node
+node_modules/
+dist/
+build/
+.vite/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / artifacts
+logs/
+*.log
+mails/
+coverage/
+htmlcov/
+# Customer docs (Conditions/) are not published
+Conditions/
+
