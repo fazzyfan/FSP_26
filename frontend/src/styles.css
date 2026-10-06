@@ -400,6 +400,63 @@ code {
   font-size: 14px;
 }
 
+/* --- Этап 2: тест, подбор, приглашения --- */
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.row.space-between {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.question {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.question legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+
+.option {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: flex-start;
+  gap: 8px;
+  font-weight: 400 !important;
+}
+
+.score {
+  background: #e8f0fe;
+  color: var(--primary);
+  border: 1px solid #c5d8f7;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.card.inner {
+  margin-top: 12px;
+  box-shadow: none;
+  background: #fbfcfe;
+}
+
+.inner-form {
+  border-top: 1px dashed var(--border);
+  padding-top: 14px;
+  margin-top: 12px;
+}
+
 @media (max-width: 900px) {
   .cabinet {
     flex-direction: column;

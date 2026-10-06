@@ -6,15 +6,15 @@ import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { ConfirmEmailPage, PendingEmailPage } from "./pages/ConfirmEmailPage";
-import { CandidateCabinet, InvitesPlaceholder, TestPlaceholder } from "./pages/candidate/CandidateCabinet";
+import { CandidateCabinet } from "./pages/candidate/CandidateCabinet";
 import { ProfileForm } from "./pages/candidate/ProfileForm";
-import {
-  EmployerCabinet,
-  EmployerInvitesPlaceholder,
-  SearchPlaceholder,
-} from "./pages/employer/EmployerCabinet";
+import { AssessmentPage } from "./pages/candidate/AssessmentPage";
+import { InvitationsPage as CandidateInvitationsPage } from "./pages/candidate/InvitationsPage";
+import { EmployerCabinet } from "./pages/employer/EmployerCabinet";
 import { CompanyForm } from "./pages/employer/CompanyForm";
 import { NeedsPage } from "./pages/employer/NeedsPage";
+import { MatchesPage } from "./pages/employer/MatchesPage";
+import { InvitationsPage as EmployerInvitationsPage } from "./pages/employer/InvitationsPage";
 
 export default function App() {
   return (
@@ -54,8 +54,8 @@ export default function App() {
           >
             <Route index element={<Navigate to="/candidate/profile" replace />} />
             <Route path="profile" element={<ProfileForm />} />
-            <Route path="test" element={<TestPlaceholder />} />
-            <Route path="invites" element={<InvitesPlaceholder />} />
+            <Route path="test" element={<AssessmentPage />} />
+            <Route path="invites" element={<CandidateInvitationsPage />} />
           </Route>
 
           {/* Кабинет работодателя */}
@@ -70,8 +70,8 @@ export default function App() {
             <Route index element={<Navigate to="/employer/company" replace />} />
             <Route path="company" element={<CompanyForm />} />
             <Route path="needs" element={<NeedsPage />} />
-            <Route path="search" element={<SearchPlaceholder />} />
-            <Route path="invites" element={<EmployerInvitesPlaceholder />} />
+            <Route path="search" element={<MatchesPage />} />
+            <Route path="invites" element={<EmployerInvitationsPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import accounts, auth, candidate, employer, references
+from app.api.v1 import accounts, assessment, auth, candidate, employer, invitations, matching, references
 
 router = APIRouter()
 router.include_router(auth.router)
@@ -10,3 +10,6 @@ router.include_router(accounts.router)
 router.include_router(candidate.router)
 router.include_router(employer.router)
 router.include_router(references.router)
+router.include_router(assessment.router)
+router.include_router(matching.router)
+router.include_router(invitations.router)

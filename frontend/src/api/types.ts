@@ -106,6 +106,111 @@ export interface EmployerNeedIn {
   skill_ids: string[];
 }
 
+// --- Оценка и категория (FR-08..FR-13) ---
+
+export interface TestInfo {
+  specialization_id: string;
+  specialization_name: string;
+  questions_count: number;
+}
+
+export interface ConfirmedCategory {
+  id: string;
+  specialization_id: string;
+  specialization_name: string;
+  grade_code: string;
+  grade_name: string;
+  confirmed_at: string;
+}
+
+export interface AttemptResult {
+  attempt_id: string;
+  specialization_id: string;
+  specialization_name: string;
+  status: string;
+  correct_count: number;
+  total_count: number;
+  score_percent: number;
+  passed: boolean;
+  grade_code: string | null;
+  grade_name: string | null;
+  next_attempt_at: string | null;
+  message: string;
+}
+
+export interface AssessmentSummary {
+  category: ConfirmedCategory | null;
+  last_attempt: AttemptResult | null;
+  next_attempt_at: string | null;
+  tests: TestInfo[];
+}
+
+export interface QuestionOption {
+  id: string;
+  text: string;
+}
+
+export interface TestQuestion {
+  id: string;
+  text: string;
+  options: QuestionOption[];
+}
+
+export interface TestAnswer {
+  question_id: string;
+  option_id: string;
+}
+
+// --- Подбор (FR-18..FR-22) ---
+
+export interface MatchCandidate {
+  candidate_id: string;
+  full_name: string;
+  specialization_name: string;
+  grade_code: string;
+  grade_name: string;
+  experience_months: number;
+  score: number;
+  matched_skills: string[];
+  reasons: string[];
+}
+
+// --- Приглашения (FR-23..FR-27) ---
+
+export interface EmployerInvitation {
+  id: string;
+  need_id: string;
+  need_title: string;
+  candidate_id: string;
+  candidate_name: string;
+  salary_from: number | null;
+  salary_to: number | null;
+  message: string | null;
+  status: string;
+  created_at: string;
+  responded_at: string | null;
+}
+
+export interface CandidateInvitation {
+  id: string;
+  company_id: string;
+  company_name: string;
+  need_title: string;
+  salary_from: number | null;
+  salary_to: number | null;
+  message: string | null;
+  status: string;
+  created_at: string;
+  responded_at: string | null;
+}
+
+export interface CandidateContacts {
+  full_name: string;
+  phone: string | null;
+  email: string;
+  about: string | null;
+}
+
 export interface FieldError {
   field: string;
   code: string;
@@ -125,4 +230,5 @@ export interface ProblemDetails {
   recovery?: string;
   retry_after_seconds?: number;
   next_allowed_at?: string;
+  extra?: Record<string, unknown>;
 }

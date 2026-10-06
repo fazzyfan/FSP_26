@@ -116,6 +116,22 @@ export const candidateApi = {
   getProfile: () => api<import("./types").CandidateProfile | null>("/candidate/profile"),
   saveProfile: (body: import("./types").CandidateProfileIn) =>
     api<import("./types").CandidateProfile>("/candidate/profile", { method: "PUT", body }),
+  // Оценка и категория (FR-08..FR-13)
+  getAssessment: () => api<import("./types").AssessmentSummary>("/candidate/assessment"),
+  getTestQuestions: (specializationId: string) =>
+    api<import("./types").TestQuestion[]>(`/candidate/assessment/tests/${specializationId}/questions`),
+  submitTest: (specializationId: string, answers: import("./types").TestAnswer[]) =>
+    api<import("./types").AttemptResult>(`/candidate/assessment/tests/${specializationId}/submit`, {
+      method: "POST",
+      body: { answers },
+    }),
+  // Приглашения (FR-23..FR-27)
+  listInvitations: () => api<import("./types").CandidateInvitation[]>("/candidate/invitations"),
+  respondInvitation: (id: string, decision: "accept" | "decline") =>
+    api<import("./types").CandidateInvitation>(`/candidate/invitations/${id}/respond`, {
+      method: "POST",
+      body: { decision },
+    }),
 };
 
 export const employerApi = {
@@ -125,4 +141,23 @@ export const employerApi = {
   listNeeds: () => api<import("./types").EmployerNeed[]>("/employer/needs"),
   createNeed: (body: import("./types").EmployerNeedIn) =>
     api<import("./types").EmployerNeed>("/employer/needs", { method: "POST", body }),
+  // Подбор (FR-18..FR-22)
+  listMatches: (needId: string) =>
+    api<import("./types").MatchCandidate[]>(`/employer/needs/${needId}/matches`),
+  // Приглашения (FR-23..FR-27)
+  listInvitations: () => api<import("./types").EmployerInvitation[]>("/employer/invitations"),
+  createInvitation: (needId: string, body: {
+    candidate_id: string;
+    salary_from: number | null;
+    salary_to: number | null;
+    message: string | null;
+  }) =>
+    api<import("./types").EmployerInvitation>(`/employer/needs/${needId}/invitations`, {
+      method: "POST",
+      body,
+    }),
+  withdrawInvitation: (id: string) =>
+    api<import("./types").EmployerInvitation>(`/employer/invitations/${id}/withdraw`, { method: "POST" }),
+  getInvitationContacts: (id: string) =>
+    api<import("./types").CandidateContacts>(`/employer/invitations/${id}/contacts`),
 };

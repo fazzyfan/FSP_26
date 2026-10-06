@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     password_min_length: int = 12
     password_max_length: int = 128
 
+    # Тест и категория (D-02..D-06, FR-08..FR-13)
+    test_pass_junior_percent: int = 50   # порог подтверждения Junior
+    test_pass_middle_percent: int = 70   # порог подтверждения Middle
+    test_retry_failed_hours: int = 24    # повтор после неуспешной попытки
+    test_retry_success_days: int = 90    # повтор после успешной попытки
+
     # CORS
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 

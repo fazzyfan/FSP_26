@@ -40,6 +40,7 @@ class CandidateProfile(Base):
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC)
     )
 
+    account: Mapped["Account"] = relationship(lazy="joined")  # type: ignore[name-defined]
     skills: Mapped[list["Skill"]] = relationship(secondary=candidate_skills, lazy="selectin")  # type: ignore[name-defined]
     roles: Mapped[list["RoleRef"]] = relationship(secondary=candidate_roles, lazy="selectin")  # type: ignore[name-defined]
     claimed_level: Mapped["Grade | None"] = relationship(lazy="joined")  # type: ignore[name-defined]
