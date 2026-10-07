@@ -39,3 +39,4 @@ htmlcov/
 # Customer docs (Conditions/) are not published
 Conditions/
 
+backend/backups/  

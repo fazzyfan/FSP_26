@@ -59,13 +59,18 @@ async def main() -> int:
             return 1
         need = needs[0]
 
-        # Кандидат: тот, кому компания может отправить приглашение.
+        # Кандидат: тот, кому компания может отправить приглашение сейчас.
+        # Приглашения могут указывать на кандидатов, скрывших профиль/деактивированных, —
+        # поэтому берём открытое приглашение только у опубликованных кандидатов из подбора.
         invites = (await emp.get("/employer/invitations")).json()
-        open_inv = next((i for i in invites if i["status"] in ("pending", "accepted")), None)
-        candidate_id = open_inv["candidate_id"] if open_inv else None
-        if candidate_id is None:
-            matches = (await emp.get(f"/employer/needs/{need['id']}/matches")).json()
-            candidate_id = matches[0]["candidate_id"] if matches else None
+        matches = (await emp.get(f"/employer/needs/{need['id']}/matches?page=1&page_size=50")).json()
+        matched_ids = {m["candidate_id"] for m in matches["items"]}
+
+        open_inv = next(
+            (i for i in invites if i["status"] in ("pending", "accepted") and i["candidate_id"] in matched_ids),
+            None,
+        )
+        candidate_id = open_inv["candidate_id"] if open_inv else (matches["items"][0]["candidate_id"] if matches["items"] else None)
         if candidate_id is None:
             print("Нет кандидата для проверки — сначала прогоните chain_check.")
             return 1
