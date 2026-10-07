@@ -272,6 +272,14 @@ export interface CandidateContacts {
   about: string | null;
 }
 
+export interface ConsentState {
+  code: string;
+  version: string;
+  title: string;
+  granted: boolean;
+  effect: string | null;
+}
+
 export interface FieldError {
   field: string;
   code: string;

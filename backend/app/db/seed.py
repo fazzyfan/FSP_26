@@ -355,19 +355,30 @@ async def seed_references(session: AsyncSession) -> dict:
     for code, name in skills.items():
         skill_objs[code] = await _get_or_create(session, Skill, code=code, name=name)
 
-    consent = await _get_or_create(
-        session,
-        ConsentDoc,
-        code="data_processing",
-        version="1.0",
-        title="Согласие на обработку персональных данных",
-        text=(
+    consent_docs = {
+        "data_processing": (
+            "Согласие на обработку персональных данных",
             "Нажимая «Зарегистрироваться», вы даёте согласие на обработку персональных данных "
             "в целях функционирования платформы обратного найма: хранение, обработку и отображение "
             "указанных вами сведений в рамках выбранной роли. Согласие можно отозвать в любой момент. "
-            "Демонстрационные данные не являются подтверждением реальной квалификации."
+            "Демонстрационные данные не являются подтверждением реальной квалификации.",
         ),
-    )
+        "profile_publication": (
+            "Согласие на публикацию профиля в каталоге",
+            "Профиль кандидата публикуется в каталоге для работодателей (ФИО, специализация, грейд, "
+            "навыки и результаты). Контакты открываются только после принятия приглашения. "
+            "Публикацию можно отключить в любой момент.",
+        ),
+        "fsp_showcase": (
+            "Согласие на показ достижений ФСП",
+            "Подтверждённые достижения участника ФСП показываются работодателям в карточке кандидата. "
+            "Отзыв согласия скрывает достижения.",
+        ),
+    }
+    for code, (title, text) in consent_docs.items():
+        await _get_or_create(session, ConsentDoc, code=code, version="1.0", title=title, text=text)
+
+    consent = await session.scalar(select(ConsentDoc).where(ConsentDoc.code == "data_processing"))
 
     await session.commit()
     return {

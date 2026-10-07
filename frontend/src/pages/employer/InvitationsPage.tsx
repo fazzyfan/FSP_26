@@ -98,6 +98,14 @@ export function InvitationsPage() {
                   <button className="btn btn-primary" onClick={() => void showContacts(inv)}>
                     Показать контакты
                   </button>
+                  <a
+                    className="btn btn-outline"
+                    href={`/api/v1/employer/invitations/${inv.id}/profile-pdf`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Скачать PDF профиля
+                  </a>
                 </div>
               )}
               {inv.status === "pending" && (

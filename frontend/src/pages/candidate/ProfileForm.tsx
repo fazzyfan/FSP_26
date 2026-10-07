@@ -58,6 +58,8 @@ export function ProfileForm() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [consents, setConsents] = useState<import("../../api/types").ConsentState[]>([]);
+  const [consentBusy, setConsentBusy] = useState(false);
 
   useEffect(() => {
     Promise.all([referenceApi.grades(), referenceApi.roles(), referenceApi.skills(), candidateApi.getProfile()])
@@ -117,6 +119,27 @@ export function ProfileForm() {
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    candidateApi.getConsents().then((r) => setConsents(r.consents)).catch(() => undefined);
+  }, []);
+
+  async function revokeConsent(code: string) {
+    if (!window.confirm("Отозвать согласие? Применятся связанные ограничения.")) return;
+    setConsentBusy(true);
+    try {
+      const r = await candidateApi.revokeConsent(code);
+      setConsents(r.consents);
+      setStatus("Согласие отозвано.");
+      // публикация управляется на сервере — перечитаем профиль
+      const p = await candidateApi.getProfile();
+      if (p) setDraft((d) => ({ ...d, is_published: p.is_published, show_fsp: p.show_fsp }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось отозвать согласие");
+    } finally {
+      setConsentBusy(false);
     }
   }
 
@@ -208,6 +231,31 @@ export function ProfileForm() {
       <button className="btn btn-primary" disabled={saving}>
         {saving ? "Сохраняем…" : "Сохранить профиль"}
       </button>
+
+      <div className="card inner">
+        <h3>Приватность и документы</h3>
+        <a className="btn btn-outline" href="/api/v1/candidate/profile/pdf" target="_blank" rel="noreferrer">
+          Скачать PDF профиля
+        </a>
+        <h4>Согласия</h4>
+        <ul className="plain-list">
+          {consents.map((c) => (
+            <li key={c.code}>
+              <b>{c.title}</b>{" "}
+              {c.granted ? (
+                <span className="muted">· действует</span>
+              ) : (
+                <span className="muted">· отозвано{c.effect ? ` — ${c.effect}` : ""}</span>
+              )}{" "}
+              {c.granted && (
+                <button className="btn btn-outline btn-sm" disabled={consentBusy} onClick={() => void revokeConsent(c.code)}>
+                  Отозвать
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
     </form>
   );
 }

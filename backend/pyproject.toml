@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings~=2.7",
     "email-validator~=2.2",
     "argon2-cffi~=25.1",
+    "reportlab~=4.2",  # PDF-профиль (FR-06)
     # httpx: скрипты проверки (smoke_test.py, chain_check.py) работают в образе API (NFR-14)
     "httpx~=0.28",
 ]

@@ -116,6 +116,14 @@ export const candidateApi = {
   getProfile: () => api<import("./types").CandidateProfile | null>("/candidate/profile"),
   saveProfile: (body: import("./types").CandidateProfileIn) =>
     api<import("./types").CandidateProfile>("/candidate/profile", { method: "PUT", body }),
+  getProfilePdf: () => api<Blob>("/candidate/profile/pdf"),
+  getConsents: () => api<{ consents: import("./types").ConsentState[] }>("/candidate/consents"),
+  revokeConsent: (code: string) =>
+    api<{ consents: import("./types").ConsentState[] }>("/candidate/consents/revoke", {
+      method: "POST",
+      body: { code },
+    }),
+  getFspAchievements: () => api<{ member_id: string | null; visible: boolean; achievements: { code: string; title: string; description: string; verified: boolean }[] }>("/candidate/fsp/achievements"),
   // Оценка и категория (FR-08..FR-13)
   getAssessment: () => api<import("./types").AssessmentSummary>("/candidate/assessment"),
   startTest: (specializationId: string, grade: "junior" | "middle") =>
