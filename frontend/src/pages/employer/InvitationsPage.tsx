@@ -7,10 +7,9 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleString("ru-RU");
 }
 
-function salaryText(from: number | null, to: number | null): string {
-  if (from === null && to === null) return "по договорённости";
-  if (from !== null && to !== null && from !== to) return `${from.toLocaleString("ru-RU")} – ${to.toLocaleString("ru-RU")} ₽`;
-  return `${(from ?? to ?? 0).toLocaleString("ru-RU")} ₽`;
+function salaryText(from: number, to: number): string {
+  if (from === to) return `${from.toLocaleString("ru-RU")} ₽`;
+  return `${from.toLocaleString("ru-RU")} – ${to.toLocaleString("ru-RU")} ₽`;
 }
 
 const STATUS: Record<string, string> = {
@@ -70,43 +69,54 @@ export function InvitationsPage() {
     <div className="stack">
       <div className="card">
         <h2>Отправленные приглашения</h2>
-        <p className="muted">Контакты кандидата открываются только после принятия приглашения (FR-27).</p>
+        <p className="muted">
+          Контакты кандидата открываются только после принятия и явного согласия кандидата.
+          Кандидат может отозвать доступ в любой момент (FR-27).
+        </p>
         {error && <div className="alert alert-error">{error}</div>}
         {invites.length === 0 && <p className="muted">Приглашений пока нет.</p>}
-        {invites.map((inv) => (
-          <div className="card inner" key={inv.id}>
-            <h3>{inv.candidate_name}</h3>
-            <p className="muted">{inv.need_title} · {salaryText(inv.salary_from, inv.salary_to)}</p>
-            <ul className="plain-list">
-              <li>
-                Статус: <b>{STATUS[inv.status] ?? inv.status}</b> {inv.responded_at && `(${fmtDate(inv.responded_at)})`}
-              </li>
-              {inv.message && <li>Сообщение: {inv.message}</li>}
-            </ul>
+        {invites.map((inv) => {
+          const revoked = inv.status === "accepted" && inv.contacts_revoked_at !== null;
+          return (
+            <div className="card inner" key={inv.id}>
+              <h3>{inv.candidate_name}</h3>
+              <p className="muted">{inv.need_title} · {salaryText(inv.salary_from, inv.salary_to)}</p>
+              <ul className="plain-list">
+                <li>
+                  Статус: <b>{STATUS[inv.status] ?? inv.status}</b> {inv.responded_at && `(${fmtDate(inv.responded_at)})`}
+                </li>
+                <li>Условия: {inv.message}</li>
+                {revoked && (
+                  <li>
+                    <b>Доступ к контактам отозван кандидатом</b> ({fmtDate(inv.contacts_revoked_at)})
+                  </li>
+                )}
+              </ul>
 
-            {inv.status === "accepted" && (
-              <div className="row">
-                <button className="btn btn-primary" onClick={() => void showContacts(inv)}>
-                  Показать контакты
+              {inv.status === "accepted" && !revoked && (
+                <div className="row">
+                  <button className="btn btn-primary" onClick={() => void showContacts(inv)}>
+                    Показать контакты
+                  </button>
+                </div>
+              )}
+              {inv.status === "pending" && (
+                <button className="btn btn-outline" disabled={busyId === inv.id} onClick={() => void withdraw(inv.id)}>
+                  Отозвать
                 </button>
-              </div>
-            )}
-            {inv.status === "pending" && (
-              <button className="btn btn-outline" disabled={busyId === inv.id} onClick={() => void withdraw(inv.id)}>
-                Отозвать
-              </button>
-            )}
+              )}
 
-            {contactsFor === inv.id && contacts && (
-              <div className="alert alert-info">
-                <b>{contacts.full_name}</b>
-                <p>Email: {contacts.email}</p>
-                {contacts.phone && <p>Телефон: {contacts.phone}</p>}
-                {contacts.about && <p className="muted">{contacts.about}</p>}
-              </div>
-            )}
-          </div>
-        ))}
+              {contactsFor === inv.id && contacts && (
+                <div className="alert alert-info">
+                  <b>{contacts.full_name}</b>
+                  <p>Email: {contacts.email}</p>
+                  {contacts.phone && <p>Телефон: {contacts.phone}</p>}
+                  {contacts.about && <p className="muted">{contacts.about}</p>}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

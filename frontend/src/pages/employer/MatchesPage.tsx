@@ -48,14 +48,28 @@ export function MatchesPage() {
   async function sendInvitation(e: FormEvent) {
     e.preventDefault();
     if (!inviteFor) return;
+    const from = Number(salaryFrom);
+    const to = Number(salaryTo);
+    if (!salaryFrom || !salaryTo || from <= 0 || to <= 0) {
+      setError("Укажите положительную зарплатную вилку (от и до).");
+      return;
+    }
+    if (from > to) {
+      setError("Нижняя граница вилки не может превышать верхнюю.");
+      return;
+    }
+    if (message.trim().length < 10) {
+      setError("Опишите условия приглашения (не менее 10 символов).");
+      return;
+    }
     setSending(true);
     setError(null);
     try {
       await employerApi.createInvitation(needId, {
         candidate_id: inviteFor,
-        salary_from: salaryFrom ? Number(salaryFrom) : null,
-        salary_to: salaryTo ? Number(salaryTo) : null,
-        message: message || null,
+        salary_from: from,
+        salary_to: to,
+        message: message.trim(),
       });
       setInviteFor(null);
       setSalaryFrom("");
@@ -136,32 +150,37 @@ export function MatchesPage() {
             <form className="form inner-form" onSubmit={sendInvitation}>
               <div className="grid-2">
                 <label>
-                  Зарплата от, ₽
+                  Зарплата от, ₽ *
                   <input
                     type="number"
-                    min={0}
+                    min={1}
+                    required
+                    placeholder="120000"
                     value={salaryFrom}
                     onChange={(e) => setSalaryFrom(e.target.value)}
                   />
                 </label>
                 <label>
-                  Зарплата до, ₽
+                  Зарплата до, ₽ *
                   <input
                     type="number"
-                    min={0}
+                    min={1}
+                    required
+                    placeholder="180000"
                     value={salaryTo}
                     onChange={(e) => setSalaryTo(e.target.value)}
                   />
                 </label>
               </div>
               <label>
-                Сообщение кандидату
+                Условия приглашения (обязательно, ≥ 10 символов)
                 <textarea
                   rows={2}
                   maxLength={2000}
+                  required
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  placeholder="Опишите задачи и условия"
+                  placeholder="Задачи, формат работы, бонусы — что предлагает компания"
                 />
               </label>
               <div className="row">

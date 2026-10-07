@@ -150,22 +150,32 @@ async def main() -> int:
             check("кандидат с ненулевым баллом", match["score"] > 0, f"score={match['score']}")
             check("объяснение подбора", len(match["reasons"]) >= 2, "; ".join(match["reasons"][:2]))
 
-        # --- 6. Приглашение ---
+        # --- 6. Приглашение (обязательные условия; повторы не создают дублей) ---
         invitation_id: str | None = None
         if match:
+            payload = {
+                "candidate_id": match["candidate_id"],
+                "salary_from": 120_000,
+                "salary_to": 180_000,
+                "message": "Демо-приглашение из цепочки проверки.",
+            }
             r = await emp.post(
                 f"/employer/needs/{need['id']}/invitations",
                 headers={"X-CSRF-Token": _csrf(emp)},
-                json={
-                    "candidate_id": match["candidate_id"],
-                    "salary_from": 120_000,
-                    "salary_to": 180_000,
-                    "message": "Демо-приглашение из цепочки проверки.",
-                },
+                json=payload,
             )
-            if r.status_code == 201:
+            if r.status_code in (200, 201):
                 invitation_id = r.json()["id"]
-                check("создание приглашения", True, str(invitation_id))
+                check("создание приглашения", True, f"http={r.status_code} {invitation_id}")
+                # идемпотентный повтор с теми же условиями -> 200 и тот же id
+                r2 = await emp.post(
+                    f"/employer/needs/{need['id']}/invitations",
+                    headers={"X-CSRF-Token": _csrf(emp)},
+                    json=payload,
+                )
+                check("повтор не создаёт дубль",
+                      r2.status_code in (200, 201) and r2.json().get("id") == invitation_id,
+                      f"http={r2.status_code}")
             elif r.status_code == 409:
                 invites = (await emp.get("/employer/invitations")).json()
                 pending = [i for i in invites if i["status"] in ("pending", "accepted")]
@@ -190,12 +200,37 @@ async def main() -> int:
                 check("принятие приглашения", r.status_code == 200 and r.json()["status"] == "accepted",
                       str(r.status_code))
 
-        # --- 8. Работодатель: контакты открыты только после принятия ---
+        # --- 8. Контакты открыты только после принятия; отзыв доступа (FR-27) ---
         if invitation_id:
             r = await emp.get(f"/employer/invitations/{invitation_id}/contacts")
-            check("контакты открыты после принятия",
-                  r.status_code == 200 and r.json().get("email") == CANDIDATE_EMAIL,
-                  f"{r.status_code} {r.text[:200] if r.status_code != 200 else r.json().get('email', '')}")
+            if r.status_code == 200:
+                check("контакты открыты после принятия",
+                      r.json().get("email") == CANDIDATE_EMAIL,
+                      r.json().get("email", ""))
+                # Отзыв доступа кандидатом
+                r = await cand.post(
+                    f"/candidate/invitations/{invitation_id}/contacts/revoke",
+                    headers={"X-CSRF-Token": _csrf(cand)},
+                )
+                check("отзыв доступа к контактам",
+                      r.status_code == 200 and r.json().get("contacts_revoked_at") is not None,
+                      str(r.status_code))
+                r = await emp.get(f"/employer/invitations/{invitation_id}/contacts")
+                check("контакты закрыты после отзыва", r.status_code == 409, str(r.status_code))
+                # Повтор старого принятия не восстанавливает доступ
+                r = await cand.post(
+                    f"/candidate/invitations/{invitation_id}/respond",
+                    headers={"X-CSRF-Token": _csrf(cand)},
+                    json={"decision": "accept"},
+                )
+                check("повторный accept идемпотентен",
+                      r.status_code == 200 and r.json().get("contacts_revoked_at") is not None,
+                      str(r.status_code))
+                r = await emp.get(f"/employer/invitations/{invitation_id}/contacts")
+                check("доступ не восстановлен после повтора", r.status_code == 409, str(r.status_code))
+            else:
+                check("контакты закрыты (прошлые прогоны: отзыв/отклонение)",
+                      r.status_code == 409, str(r.status_code))
 
         # --- 9. Права: контакты недоступны без принятия ---
         invites = (await emp.get("/employer/invitations")).json()

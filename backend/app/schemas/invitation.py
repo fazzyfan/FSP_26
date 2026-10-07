@@ -1,4 +1,8 @@
-"""Схемы приглашений и открытия контактов (FR-23..FR-27)."""
+"""Схемы приглашений и открытия контактов (FR-23..FR-27).
+
+Приглашение обязано содержать описание (>= 10 символов), контакт работодателя
+(берётся из профиля компании) и положительную зарплатную вилку.
+"""
 
 from __future__ import annotations
 
@@ -10,13 +14,13 @@ from pydantic import BaseModel, Field, model_validator
 
 class InvitationCreateIn(BaseModel):
     candidate_id: uuid.UUID
-    salary_from: int | None = Field(default=None, ge=0, le=100_000_000)
-    salary_to: int | None = Field(default=None, ge=0, le=100_000_000)
-    message: str | None = Field(default=None, max_length=2000)
+    salary_from: int = Field(ge=1, le=100_000_000, description="Нижняя граница вилки, > 0")
+    salary_to: int = Field(ge=1, le=100_000_000, description="Верхняя граница вилки, > 0")
+    message: str = Field(min_length=10, max_length=2000, description="Описание условий, >= 10 символов")
 
     @model_validator(mode="after")
     def check_salary(self) -> "InvitationCreateIn":
-        if self.salary_from is not None and self.salary_to is not None and self.salary_from > self.salary_to:
+        if self.salary_from > self.salary_to:
             raise ValueError("salary_from не может превышать salary_to")
         return self
 
@@ -33,27 +37,33 @@ class EmployerInvitationOut(BaseModel):
     need_title: str
     candidate_id: str
     candidate_name: str
-    salary_from: int | None
-    salary_to: int | None
-    message: str | None
+    salary_from: int
+    salary_to: int
+    message: str
     status: str
     created_at: str
     responded_at: str | None
+    contacts_consented_at: str | None
+    contacts_revoked_at: str | None
 
 
 class CandidateInvitationOut(BaseModel):
-    """Проекция для кандидата."""
+    """Проекция для кандидата: исходные условия + контакт работодателя (FR-23)."""
 
     id: str
     company_id: str
     company_name: str
     need_title: str
-    salary_from: int | None
-    salary_to: int | None
-    message: str | None
+    salary_from: int
+    salary_to: int
+    message: str
     status: str
     created_at: str
     responded_at: str | None
+    company_contact_email: str | None
+    company_phone: str | None
+    contacts_consented_at: str | None
+    contacts_revoked_at: str | None
 
 
 class CandidateContactsOut(BaseModel):

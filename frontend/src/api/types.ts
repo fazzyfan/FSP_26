@@ -183,12 +183,14 @@ export interface EmployerInvitation {
   need_title: string;
   candidate_id: string;
   candidate_name: string;
-  salary_from: number | null;
-  salary_to: number | null;
-  message: string | null;
+  salary_from: number;
+  salary_to: number;
+  message: string;
   status: string;
   created_at: string;
   responded_at: string | null;
+  contacts_consented_at: string | null;
+  contacts_revoked_at: string | null;
 }
 
 export interface CandidateInvitation {
@@ -196,12 +198,16 @@ export interface CandidateInvitation {
   company_id: string;
   company_name: string;
   need_title: string;
-  salary_from: number | null;
-  salary_to: number | null;
-  message: string | null;
+  salary_from: number;
+  salary_to: number;
+  message: string;
   status: string;
   created_at: string;
   responded_at: string | null;
+  company_contact_email: string | null;
+  company_phone: string | null;
+  contacts_consented_at: string | null;
+  contacts_revoked_at: string | null;
 }
 
 export interface CandidateContacts {

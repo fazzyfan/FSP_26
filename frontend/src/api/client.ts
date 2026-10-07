@@ -132,6 +132,10 @@ export const candidateApi = {
       method: "POST",
       body: { decision },
     }),
+  revokeContacts: (id: string) =>
+    api<import("./types").CandidateInvitation>(`/candidate/invitations/${id}/contacts/revoke`, {
+      method: "POST",
+    }),
 };
 
 export const employerApi = {
@@ -148,9 +152,9 @@ export const employerApi = {
   listInvitations: () => api<import("./types").EmployerInvitation[]>("/employer/invitations"),
   createInvitation: (needId: string, body: {
     candidate_id: string;
-    salary_from: number | null;
-    salary_to: number | null;
-    message: string | null;
+    salary_from: number;
+    salary_to: number;
+    message: string;
   }) =>
     api<import("./types").EmployerInvitation>(`/employer/needs/${needId}/invitations`, {
       method: "POST",

@@ -1,6 +1,13 @@
 """Приглашения и открытие контактов (FR-23..FR-27).
 
-Контакты кандидата доступны работодателю только после принятия приглашения (FR-27).
+Правила MVP:
+- приглашение обязано содержать описание, зарплатную вилку (salary_from > 0);
+  исходные условия фиксируются в строке и не изменяются;
+- от одной компании кандидату одно «открытое» приглашение; повторы и
+  одновременные запросы не создают дублей (идемпотентный ответ существующим);
+- контакты кандидата открываются конкретной компании только после явного
+  согласия кандидата; доступ можно отозвать; повтор старого принятия
+  не восстанавливает доступ.
 """
 
 from __future__ import annotations
@@ -8,8 +15,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_csrf, require_roles
@@ -19,7 +27,7 @@ from app.models.account import Account, Role
 from app.models.assessment import ConfirmedCategory
 from app.models.candidate import CandidateProfile
 from app.models.employer import Company, EmployerNeed
-from app.models.invitation import Invitation, InvitationStatus
+from app.models.invitation import Invitation, InvitationStatus, OPEN_STATUSES
 from app.schemas.invitation import (
     CandidateContactsOut,
     CandidateInvitationOut,
@@ -27,6 +35,7 @@ from app.schemas.invitation import (
     InvitationCreateIn,
     RespondIn,
 )
+from app.services import contacts as contacts_service
 
 router = APIRouter(tags=["invitations"])
 
@@ -49,11 +58,26 @@ def _employer_out(inv: Invitation) -> EmployerInvitationOut:
         status=inv.status.value,
         created_at=inv.created_at.isoformat(),
         responded_at=inv.responded_at.isoformat() if inv.responded_at else None,
+        contacts_consented_at=inv.contacts_consented_at.isoformat() if inv.contacts_consented_at else None,
+        contacts_revoked_at=inv.contacts_revoked_at.isoformat() if inv.contacts_revoked_at else None,
     )
 
 
 async def _own_company(db: AsyncSession, account: Account) -> Company | None:
     return await db.scalar(select(Company).where(Company.account_id == account.id))
+
+
+async def _open_invitation(
+    db: AsyncSession, company_id: uuid.UUID, candidate_id: uuid.UUID
+) -> Invitation | None:
+    """Открытое приглашение компании кандидату (единственное)."""
+    return await db.scalar(
+        select(Invitation).where(
+            Invitation.company_id == company_id,
+            Invitation.candidate_id == candidate_id,
+            Invitation.status.in_(OPEN_STATUSES),
+        )
+    )
 
 
 @router.get("/employer/invitations", response_model=list[EmployerInvitationOut])
@@ -83,10 +107,16 @@ async def employer_list_invitations(
 async def create_invitation(
     need_id: uuid.UUID,
     payload: InvitationCreateIn,
+    response: Response,
     account: Account = EmployerDep,
     db: AsyncSession = Depends(get_db),
 ) -> EmployerInvitationOut:
-    """FR-23: приглашение с зарплатной вилкой. Только опубликованным кандидатам с категорией."""
+    """FR-23: приглашение с описанием и зарплатной вилкой.
+
+    Идемпотентность: повторный запрос с теми же условиями возвращает
+    существующее открытое приглашение (HTTP 200), дубликаты не создаются
+    (в том числе при одновременных запросах — partial unique index + retry).
+    """
     company = await _own_company(db, account)
     if company is None:
         raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
@@ -110,16 +140,22 @@ async def create_invitation(
                              "У кандидата нет подтверждённой категории",
                              detail="Приглашать можно кандидатов, прошедших тест.", recovery="correct_input")
 
-    duplicate = await db.scalar(
-        select(Invitation).where(
-            Invitation.need_id == need.id,
-            Invitation.candidate_id == candidate.id,
-            Invitation.status.in_([InvitationStatus.PENDING, InvitationStatus.ACCEPTED]),
+    # Одно открытое приглашение от компании кандидату (FR-23, NFR-06)
+    existing = await _open_invitation(db, company.id, candidate.id)
+    if existing is not None:
+        same_terms = (
+            existing.salary_from == payload.salary_from
+            and existing.salary_to == payload.salary_to
+            and existing.message == payload.message
         )
-    )
-    if duplicate is not None:
-        raise errors.Problem(409, errors.CONFLICT, errors.E11_CONCURRENCY,
-                             "Приглашение этому кандидату уже отправлено", recovery="none")
+        if same_terms:
+            response.status_code = 200  # безопасный повтор после потери связи
+            return _employer_out(existing)
+        raise errors.Problem(
+            409, errors.CONFLICT, errors.E11_CONCURRENCY,
+            "У этой компании уже есть открытое приглашение кандидату",
+            detail="Отменить текущее или дождаться ответа кандидата.", recovery="none",
+        )
 
     invitation = Invitation(
         need_id=need.id,
@@ -131,7 +167,17 @@ async def create_invitation(
         status=InvitationStatus.PENDING,
     )
     db.add(invitation)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Гонка: параллельный запрос уже создал открытое приглашение
+        await db.rollback()
+        existing = await _open_invitation(db, company.id, candidate.id)
+        if existing is None:
+            raise errors.Problem(409, errors.CONFLICT, errors.E11_CONCURRENCY,
+                                 "Не удалось создать приглашение, повторите запрос", recovery="retry")
+        response.status_code = 200
+        return _employer_out(existing)
     await db.refresh(invitation)
     return _employer_out(invitation)
 
@@ -167,18 +213,17 @@ async def invitation_contacts(
     account: Account = EmployerDep,
     db: AsyncSession = Depends(get_db),
 ) -> CandidateContactsOut:
-    """FR-27: контакты открываются только после принятия приглашения."""
+    """FR-27: контакты открываются только после принятия и согласия кандидата.
+
+    Отзыв доступа закрывает контакты; повторное принятие их не восстанавливает.
+    """
     company = await _own_company(db, account)
     inv = await db.get(Invitation, inv_id)
     if inv is None or company is None or inv.company_id != company.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
-    if inv.status != InvitationStatus.ACCEPTED:
-        raise errors.Problem(
-            409, errors.INVALID_STATE, errors.E12_STATE, "Контакты пока закрыты",
-            detail="Контакты кандидата открываются после принятия приглашения.",
-            recovery="none",
-        )
+    contacts_service.require_contacts(inv)
+
     candidate = inv.candidate
     inv.contacts_viewed_at = datetime.now(UTC)
     await db.commit()
@@ -204,6 +249,10 @@ def _candidate_out(inv: Invitation) -> CandidateInvitationOut:
         status=inv.status.value,
         created_at=inv.created_at.isoformat(),
         responded_at=inv.responded_at.isoformat() if inv.responded_at else None,
+        company_contact_email=inv.company.contact_email if inv.company else None,
+        company_phone=inv.company.phone if inv.company else None,
+        contacts_consented_at=inv.contacts_consented_at.isoformat() if inv.contacts_consented_at else None,
+        contacts_revoked_at=inv.contacts_revoked_at.isoformat() if inv.contacts_revoked_at else None,
     )
 
 
@@ -242,17 +291,62 @@ async def respond_invitation(
     account: Account = CandidateDep,
     db: AsyncSession = Depends(get_db),
 ) -> CandidateInvitationOut:
-    """FR-25: принятие или отклонение приглашения. Принятие открывает контакты работодателю."""
+    """FR-25: принятие или отклонение. Принятие = явное согласие открыть контакты.
+
+    Повторный accept (после потери связи) идемпотентен: статус и согласие не
+    меняются, отозванный доступ не восстанавливается.
+    """
     profile = await _own_profile(db, account)
     inv = await db.get(Invitation, inv_id)
     if inv is None or inv.candidate_id != profile.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
+
+    if inv.status == InvitationStatus.ACCEPTED:
+        if payload.decision == "accept":
+            # Идемпотентный повтор старого принятия; контакты не переоткрываются
+            return _candidate_out(inv)
+        raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
+                             "Приглашение уже принято", recovery="none")
+
     if inv.status != InvitationStatus.PENDING:
         raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
                              "Приглашение уже обработано", recovery="none")
+
     inv.status = InvitationStatus.ACCEPTED if payload.decision == "accept" else InvitationStatus.DECLINED
     inv.responded_at = datetime.now(UTC)
+    if payload.decision == "accept":
+        # Явное согласие кандидата на открытие контактов именно этой компании (FR-27)
+        inv.contacts_consented_at = datetime.now(UTC)
+    await db.commit()
+    await db.refresh(inv)
+    return _candidate_out(inv)
+
+
+@router.post(
+    "/candidate/invitations/{inv_id}/contacts/revoke",
+    response_model=CandidateInvitationOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def revoke_contacts(
+    inv_id: uuid.UUID,
+    account: Account = CandidateDep,
+    db: AsyncSession = Depends(get_db),
+) -> CandidateInvitationOut:
+    """Отзыв доступа к контактам (FR-27). Контакты закрываются немедленно;
+    повторное принятие приглашения доступ не восстанавливает."""
+    profile = await _own_profile(db, account)
+    inv = await db.get(Invitation, inv_id)
+    if inv is None or inv.candidate_id != profile.id:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Приглашение не найдено", recovery="none")
+    if inv.status != InvitationStatus.ACCEPTED or inv.contacts_consented_at is None:
+        raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
+                             "Контакты по этому приглашению не открыты", recovery="none")
+    if inv.contacts_revoked_at is not None:
+        raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
+                             "Доступ уже отозван", recovery="none")
+    inv.contacts_revoked_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(inv)
     return _candidate_out(inv)
