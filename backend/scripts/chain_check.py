@@ -142,12 +142,14 @@ async def main() -> int:
                 check("категория подтверждена", result["grade_code"] == grade_code,
                       f"grade={result['grade_code']}")
 
-            # защита от повторной отправки и перезаписи
+            # защита от повторной отправки и перезаписи:
+            # повторный submit завершённой попытки восстанавливает результат (200)
             r2 = await cand.post(
                 f"/candidate/assessment/attempts/{attempt_id}/submit",
                 headers={"X-CSRF-Token": _csrf(cand)},
             )
-            check("повторная отправка 409", r2.status_code == 409, str(r2.status_code))
+            check("повторная отправка — восстановлен результат",
+                  r2.status_code == 200 and r2.json().get("status") == "completed", str(r2.status_code))
             r2 = await cand.put(
                 f"/candidate/assessment/attempts/{attempt_id}/answers",
                 headers={"X-CSRF-Token": _csrf(cand)},

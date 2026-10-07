@@ -149,6 +149,14 @@ async def main() -> int:
         r = await c.put(f"/candidate/assessment/attempts/{attempt_id}/answers",
                         headers={"X-CSRF-Token": csrf}, json={"answers": all_correct[:5]})
         check("частичное сохранение", r.status_code == 200 and len(r.json()["answers"]) == 5, str(r.status_code))
+
+        # --- Версия ответов (NFR-06): запоздалый запрос не затирает свежий выбор ---
+        v0 = r.json()["answers_version"]
+        r_stale = await c.put(f"/candidate/assessment/attempts/{attempt_id}/answers",
+                              headers={"X-CSRF-Token": csrf},
+                              json={"answers": all_correct[:3], "version": v0 - 1})
+        check("устаревшая версия ответов 409", r_stale.status_code == 409, str(r_stale.status_code))
+
         r = await c.put(f"/candidate/assessment/attempts/{attempt_id}/answers",
                         headers={"X-CSRF-Token": csrf}, json={"answers": all_correct})
         check("сохранение всех ответов", r.status_code == 200 and len(r.json()["answers"]) == 6, str(r.status_code))
@@ -170,9 +178,13 @@ async def main() -> int:
               str(result["block_results"]))
 
         # --- Защита от повторов и перезаписи ---
+        # Повторный submit завершённой попытки (после потери связи) НЕ даёт 409:
+        # клиент получает сохранённый результат обратно (восстановление).
         r2 = await c.post(f"/candidate/assessment/attempts/{attempt_id}/submit",
                           headers={"X-CSRF-Token": csrf})
-        check("повторная отправка 409", r2.status_code == 409, str(r2.status_code))
+        check("повторная отправка — восстановлен результат",
+              r2.status_code == 200 and r2.json()["status"] == "completed"
+              and r2.json()["score_percent"] == result["score_percent"], str(r2.status_code))
         r2 = await c.put(f"/candidate/assessment/attempts/{attempt_id}/answers",
                          headers={"X-CSRF-Token": csrf}, json={"answers": all_correct})
         check("перезапись завершённой попытки 409", r2.status_code == 409, str(r2.status_code))

@@ -133,10 +133,10 @@ export const candidateApi = {
     }),
   getAttempt: (attemptId: string) =>
     api<import("./types").AttemptState>(`/candidate/assessment/attempts/${attemptId}`),
-  saveAttemptAnswers: (attemptId: string, answers: import("./types").TestAnswer[]) =>
+  saveAttemptAnswers: (attemptId: string, answers: import("./types").TestAnswer[], version?: number | null) =>
     api<import("./types").AttemptState>(`/candidate/assessment/attempts/${attemptId}/answers`, {
       method: "PUT",
-      body: { answers },
+      body: { answers, version: version ?? null },
     }),
   submitAttempt: (attemptId: string) =>
     api<import("./types").AttemptResult>(`/candidate/assessment/attempts/${attemptId}/submit`, {

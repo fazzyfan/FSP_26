@@ -1,11 +1,15 @@
 """Подбор кандидатов под потребность (FR-18..FR-21): ранжирование с объяснением.
 
 Формула балла (объяснимость — FR-21):
-- 60% — подтверждённые компетенции (доля навыков потребности у кандидата);
-- 30% — результат теста (последняя завершённая попытка по категории);
-- 10% — достижения ФСП (профиль виден в ФСП и участник подтверждён).
+- 60% — подтверждённые компетенции: средняя успешность блоков попытки, которая
+  подтвердила категорию (не заявленные кандидатом навыки);
+- 30% — результат теста: балл подтверждающей попытки (только успешной и по
+  категории кандидата, а не «последней любой»);
+- 10% — достижения ФСП: профиль виден в ФСП, номер участника указан и реестр
+  ФСП возвращает хотя бы одно подтверждённое достижение.
 
 Неподходящие специализации и грейды исключаются из выдачи (FR-18).
+Кандидаты с деактивированным аккаунтом (отзыв обработки данных) исключаются.
 Контакты не включаются: они открываются только после принятия приглашения (FR-26/27).
 """
 
@@ -18,9 +22,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.account import Account, AccountStatus
 from app.models.assessment import ConfirmedCategory, TestAttempt, TestAttemptStatus
 from app.models.candidate import CandidateProfile
 from app.models.employer import EmployerNeed
+from app.services import fsp as fsp_service
 
 COMPETENCY_WEIGHT = 60
 TEST_WEIGHT = 30
@@ -41,6 +47,17 @@ class MatchCandidate:
     reasons: list[str] = field(default_factory=list)
 
 
+def _block_success_rate(attempt: TestAttempt) -> float:
+    """Средняя успешность блоков подтверждающей попытки (60%, FR-19)."""
+    totals = [attempt.total_count // 3] * 3 if attempt.total_count else [2, 2, 2]
+    corrects = [attempt.block1_correct, attempt.block2_correct, attempt.block3_correct]
+    ratios = []
+    for total, correct in zip(totals, corrects):
+        if total > 0:
+            ratios.append(correct / total)
+    return sum(ratios) / len(ratios) if ratios else 0.0
+
+
 async def match_candidates_for_need(
     db: AsyncSession,
     need: EmployerNeed,
@@ -51,7 +68,8 @@ async def match_candidates_for_need(
     """Опубликованные кандидаты с активной категорией, подходящей потребности.
 
     Исключаются кандидаты с другой специализацией и грейдом вне диапазона
-    потребности (или вне выбранного фильтра grade_code).
+    потребности (или вне выбранного фильтра grade_code), а также кандидаты
+    с неактивным аккаунтом (отзыв обработки данных, FR-04).
     """
     need_grade_ids = {g.id for g in need.grades}
     grade_by_code = {g.code: g.id for g in need.grades}
@@ -59,10 +77,12 @@ async def match_candidates_for_need(
     stmt = (
         select(CandidateProfile, ConfirmedCategory)
         .join(ConfirmedCategory, ConfirmedCategory.candidate_id == CandidateProfile.id)
+        .join(Account, Account.id == CandidateProfile.account_id)
         .options(selectinload(CandidateProfile.skills))
         .where(
             CandidateProfile.is_published.is_(True),
             ConfirmedCategory.is_active.is_(True),
+            Account.status == AccountStatus.ACTIVE,
         )
     )
     if need.specialization_id is not None:
@@ -80,21 +100,25 @@ async def match_candidates_for_need(
     if not pairs:
         return []
 
-    candidate_ids = [c.id for _, c in pairs]
-    # Последняя завершённая попытка на кандидата (результат теста, 30%)
-    attempts = (
-        await db.scalars(
-            select(TestAttempt)
-            .where(
-                TestAttempt.candidate_id.in_(candidate_ids),
-                TestAttempt.status == TestAttemptStatus.COMPLETED,
-            )
-            .order_by(TestAttempt.submitted_at.desc())
-        )
-    ).all()
-    best_by_candidate: dict[uuid.UUID, TestAttempt] = {}
-    for a in attempts:
-        best_by_candidate.setdefault(a.candidate_id, a)
+    # Подтверждающие попытки: только успешные и именно по активной категории.
+    # Никаких «последних попыток» другой категории или проваленных.
+    attempt_ids = {c.source_attempt_id for _, c in pairs if c.source_attempt_id is not None}
+    confirming: dict[uuid.UUID, TestAttempt] = {}
+    if attempt_ids:
+        confirming = {
+            a.id: a
+            for a in (
+                await db.scalars(
+                    select(TestAttempt).where(
+                        TestAttempt.id.in_(attempt_ids),
+                        TestAttempt.status == TestAttemptStatus.COMPLETED,
+                        TestAttempt.result_grade_id.isnot(None),
+                    )
+                )
+            ).all()
+        }
+
+    fsp_provider = fsp_service.get_fsp_provider()
 
     results: list[MatchCandidate] = []
     for category, profile in pairs:
@@ -106,34 +130,40 @@ async def match_candidates_for_need(
         if grade_ok:
             reasons.append(f"Грейд «{category.grade.name}» в допустимом диапазоне потребности")
 
-        # --- 60%: компетенции (навыки) ---
-        need_skills = {s.id: s.name for s in need.skills}
-        profile_skills = {s.id for s in profile.skills}
-        matched = [name for sid, name in need_skills.items() if sid in profile_skills]
-        competency_ratio = len(matched) / len(need_skills) if need_skills else 0.0
-        competency_points = round(COMPETENCY_WEIGHT * competency_ratio, 1)
-        if need_skills:
+        # --- 60%: компетенции (подтверждённые блоки попытки, а не self-reported навыки) ---
+        attempt = confirming.get(category.source_attempt_id) if category.source_attempt_id else None
+        if attempt is not None:
+            block_rate = _block_success_rate(attempt)
+            competency_points = round(COMPETENCY_WEIGHT * block_rate, 1)
             reasons.append(
-                f"Компетенции: {len(matched)} из {len(need_skills)} навыков "
+                f"Компетенции: подтверждённые блоки {attempt.score_percent}%, "
+                f"успешность блоков {int(block_rate * 100)}% "
                 f"({competency_points} из {COMPETENCY_WEIGHT} баллов)"
             )
+        else:
+            competency_points = 0.0
+            reasons.append("Компетенции не учитываются (нет подтверждающей попытки)")
 
-        # --- 30%: результат теста ---
-        attempt = best_by_candidate.get(profile.id)
-        test_ratio = (attempt.score_percent or 0) / 100 if attempt else 0.0
+        # --- 30%: результат теста (подтверждающая попытка) ---
+        test_ratio = ((attempt.score_percent or 0) / 100) if attempt is not None else 0.0
         test_points = round(TEST_WEIGHT * test_ratio, 1)
         if attempt is not None:
-            reasons.append(f"Результат теста: {attempt.score_percent}% ({test_points} из {TEST_WEIGHT} баллов)")
+            reasons.append(
+                f"Результат теста: {attempt.score_percent}% ({test_points} из {TEST_WEIGHT} баллов)"
+            )
         else:
-            reasons.append("Результат теста не учитывается (нет завершённой попытки)")
+            reasons.append("Результат теста не учитывается (нет подтверждающей попытки)")
 
-        # --- 10%: достижения ФСП ---
-        fsp_ok = bool(profile.show_fsp and profile.fsp_member_id)
-        fsp_points = FSP_WEIGHT if fsp_ok else 0.0
-        if fsp_ok:
-            reasons.append(f"Достижения ФСП подтверждены ({FSP_WEIGHT} из {FSP_WEIGHT} баллов)")
+        # --- 10%: достижения ФСП (реестр, а не просто непустой ID) ---
+        fsp_points = 0.0
+        if profile.show_fsp and profile.fsp_member_id:
+            achievements = await fsp_provider.get_achievements(profile.fsp_member_id)
+            if any(a.verified for a in achievements):
+                fsp_points = FSP_WEIGHT
+        if fsp_points > 0:
+            reasons.append(f"Достижения ФСП подтверждены реестром ({FSP_WEIGHT} из {FSP_WEIGHT} баллов)")
         else:
-            reasons.append("Достижения ФСП не указаны (0 баллов)")
+            reasons.append("Достижения ФСП не подтверждены (0 баллов)")
 
         score = round(competency_points + test_points + fsp_points)
 
@@ -154,7 +184,7 @@ async def match_candidates_for_need(
                     "test": test_points,
                     "fsp": fsp_points,
                 },
-                matched_skills=matched,
+                matched_skills=[],
                 reasons=reasons,
             )
         )

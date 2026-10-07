@@ -17,7 +17,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Text, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import UUID as PgUUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -79,9 +79,19 @@ class TestAttempt(Base):
     Попытка создаётся на старте (status=in_progress) и живёт до expires_at
     (серверный таймер 20 минут). Ответы сохраняются по мере выбора и
     восстанавливаются после перезагрузки. После submit попытка закрыта.
+    Одна активная попытка на кандидата гарантируется частичным уникальным
+    индексом (NFR-06): параллельные старты не создают две in_progress.
     """
 
     __tablename__ = "test_attempts"
+    __table_args__ = (
+        Index(
+            "uq_test_attempts_active_candidate",
+            "candidate_id",
+            unique=True,
+            postgresql_where=text("status = 'in_progress'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     candidate_id: Mapped[uuid.UUID] = mapped_column(
@@ -109,6 +119,14 @@ class TestAttempt(Base):
     result_grade_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("grades.id", ondelete="SET NULL"), nullable=True
     )
+    # Версия сохранённых ответов (NFR-06, автосохранение): каждый PUT увеличивает
+    # счётчик; запрос с устаревшей версией отклоняется (409), чтобы запоздавший
+    # запрос не затёр новый выбор.
+    answers_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Снимок заданий и эталонов на момент старта попытки (FR-09): банк вопросов
+    # может меняться, но попытка проверяется и восстанавливается по зафиксированным
+    # вариантам. JSONB: [{id, text, block, options: [{id, text, is_correct}]}]
+    questions_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     answers: Mapped[list["TestAttemptAnswer"]] = relationship(
         back_populates="attempt", cascade="all, delete-orphan", lazy="selectin"

@@ -51,6 +51,39 @@ async def questions_for_category(
     )
 
 
+def build_questions_snapshot(questions: list[TestQuestion]) -> list[dict]:
+    """Снимок заданий с эталонами на момент старта попытки (FR-09).
+
+    Банк вопросов может меняться, но попытка восстанавливается и проверяется
+    по зафиксированным вариантам; правильные ответы клиенту не передаются.
+    """
+    return [
+        {
+            "id": str(q.id),
+            "text": q.text,
+            "block": q.block,
+            "options": [
+                {"id": str(o.id), "text": o.text, "is_correct": bool(o.is_correct)}
+                for o in q.options
+            ],
+        }
+        for q in questions
+    ]
+
+
+def snapshot_question_map(snapshot: list[dict] | None) -> dict[str, dict]:
+    """question_id -> {block, correct_option_id, options:{id:text}} из снимка."""
+    result: dict[str, dict] = {}
+    for q in snapshot or []:
+        correct = next((o["id"] for o in q["options"] if o.get("is_correct")), None)
+        result[str(q["id"])] = {
+            "block": int(q["block"]),
+            "correct_option_id": correct,
+            "options": {str(o["id"]): str(o["text"]) for o in q["options"]},
+        }
+    return result
+
+
 def next_attempt_at(last: TestAttempt | None, settings: Settings) -> datetime | None:
     """Пересдача той же категории: через 24 часа после завершённой попытки.
 
@@ -172,8 +205,16 @@ async def start_attempt(
     specialization_id: uuid.UUID,
     grade_level: int,
     settings: Settings,
+    questions: list[TestQuestion] | None = None,
 ) -> TestAttempt:
-    """Создаёт (или продолжает) активную попытку теста с серверным таймером."""
+    """Создаёт (или продолжает) активную попытку теста с серверным таймером.
+
+    Уникальный индекс (candidate_id, status='in_progress') защищает от гонки:
+    при одновременных стартах второй запрос получает IntegrityError и просто
+    продолжает уже созданную попытку.
+    """
+    from sqlalchemy.exc import IntegrityError
+
     await ensure_can_start(db, candidate_id, specialization_id, grade_level, settings)
 
     existing = await active_in_progress_attempt(db, candidate_id)
@@ -188,9 +229,18 @@ async def start_attempt(
         status=TestAttemptStatus.IN_PROGRESS,
         started_at=now,
         expires_at=now + timedelta(minutes=settings.test_timeout_minutes),
+        questions_snapshot=build_questions_snapshot(questions or []),
     )
     db.add(attempt)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Гонка: параллельный запрос уже создал активную попытку
+        await db.rollback()
+        existing = await active_in_progress_attempt(db, candidate_id)
+        if existing is not None:
+            return existing
+        raise
     await db.refresh(attempt)
     return attempt
 
@@ -204,8 +254,14 @@ async def save_answers(
     attempt: TestAttempt,
     answers: list[tuple[uuid.UUID, uuid.UUID]],
     valid_question_ids: set[uuid.UUID],
+    expected_version: int | None = None,
 ) -> None:
-    """Upsert ответов активной попытки. Завершённые/просроченные попытки закрыты."""
+    """Upsert ответов активной попытки. Завершённые/просроченные попытки закрыты.
+
+    Версия ответов (NFR-06): клиент передаёт answers_version, с которой он
+    работал. Если на сервере уже новее — запрос отклоняется (409), чтобы
+    запоздавшее автосохранение не затерло свежий выбор.
+    """
     if attempt.status != TestAttemptStatus.IN_PROGRESS:
         raise errors.Problem(
             409, errors.INVALID_STATE, errors.E12_STATE, "Попытка уже завершена",
@@ -218,6 +274,15 @@ async def save_answers(
             409, errors.INVALID_STATE, errors.E13_TIME, "Время попытки истекло",
             detail="Серверный таймер попытки истёк. Начните новую попытку.",
             recovery="retry",
+        )
+    if expected_version is not None and expected_version != attempt.answers_version:
+        raise errors.Problem(
+            409, errors.CONFLICT, errors.E11_CONCURRENCY, "Ответы устарели",
+            detail=(
+                f"Клиент работал с версией {expected_version}, "
+                f"на сервере уже {attempt.answers_version}. Обновите состояние попытки."
+            ),
+            recovery="refresh", extra={"current_version": attempt.answers_version},
         )
 
     existing = await attempt_answers_map(db, attempt)
@@ -236,6 +301,7 @@ async def save_answers(
             existing[qid] = answer
         else:
             answer.option_id = opt_id
+    attempt.answers_version += 1
     await db.commit()
 
 
@@ -259,6 +325,7 @@ async def submit_attempt(
 
     Вызывается только для активной попытки с полным набором ответов;
     защита от повторной отправки реализована проверкой статуса.
+    Оценка выполняется по снимку заданий (fallback — текущий банк вопросов).
     """
     if attempt.status == TestAttemptStatus.COMPLETED:
         raise errors.Problem(
@@ -273,23 +340,38 @@ async def submit_attempt(
             recovery="retry",
         )
 
-    questions = await questions_for_category(db, attempt.specialization_id, attempt.grade_level)
-    q_by_id = {q.id: q for q in questions}
-    answer_rows = attempt.answers
-
-    correct_count = 0
-    block_correct = {b: 0 for b in BLOCKS}
-    block_total = {b: 0 for b in BLOCKS}
-    total = len(questions)
-    for row in answer_rows:
-        question = q_by_id.get(row.question_id)
-        if question is None:
-            continue
-        block_total[question.block] = block_total.get(question.block, 0) + 1
-        option = next((o for o in question.options if o.id == row.option_id), None)
-        if option is not None and option.is_correct:
-            correct_count += 1
-            block_correct[question.block] = block_correct.get(question.block, 0) + 1
+    snapshot = snapshot_question_map(attempt.questions_snapshot) if attempt.questions_snapshot else {}
+    if snapshot:
+        # Оценка по снимку: {question_id: {block, correct_option_id}}
+        total = len(snapshot)
+        correct_count = 0
+        block_correct = {b: 0 for b in BLOCKS}
+        block_total: dict[int, int] = {}
+        for row in attempt.answers:
+            meta = snapshot.get(str(row.question_id))
+            if meta is None:
+                continue
+            block_total[meta["block"]] = block_total.get(meta["block"], 0) + 1
+            if meta["correct_option_id"] is not None and str(row.option_id) == meta["correct_option_id"]:
+                correct_count += 1
+                block_correct[meta["block"]] = block_correct.get(meta["block"], 0) + 1
+    else:
+        # Совместимость со старыми попытками без снимка: текущий банк вопросов
+        questions = await questions_for_category(db, attempt.specialization_id, attempt.grade_level)
+        q_by_id = {q.id: q for q in questions}
+        correct_count = 0
+        block_correct = {b: 0 for b in BLOCKS}
+        block_total: dict[int, int] = {}
+        total = len(questions)
+        for row in attempt.answers:
+            question = q_by_id.get(row.question_id)
+            if question is None:
+                continue
+            block_total[question.block] = block_total.get(question.block, 0) + 1
+            option = next((o for o in question.options if o.id == row.option_id), None)
+            if option is not None and option.is_correct:
+                correct_count += 1
+                block_correct[question.block] = block_correct.get(question.block, 0) + 1
 
     score_percent = round(correct_count * 100 / total) if total else 0
     blocks_passed = all(

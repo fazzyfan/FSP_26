@@ -52,6 +52,10 @@ class AnswerIn(BaseModel):
 
 class AttemptAnswersIn(BaseModel):
     answers: list[AnswerIn] = Field(default_factory=list)
+    # Версия ответов, с которой работал клиент (NFR-06, автосохранение).
+    # Если сервер уже новее — запрос отклоняется (409), чтобы запоздавший
+    # запрос не затёр свежий выбор. None — обратная совместимость.
+    version: int | None = Field(default=None, description="Ожидаемая версия ответов")
 
 
 class AttemptStateOut(BaseModel):
@@ -68,6 +72,7 @@ class AttemptStateOut(BaseModel):
     remaining_seconds: int
     questions: list[QuestionOut]
     answers: list[AnswerIn]
+    answers_version: int
 
 
 class BlockResultOut(BaseModel):

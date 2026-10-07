@@ -67,6 +67,7 @@ async def setup_data() -> dict:
             skill_codes: list[str],
             test_score: int | None,
             fsp: bool = False,
+            blocks: tuple[int, int, int] = (0, 0, 0),
         ) -> str:
             email = f"match-{tag}-{uuid.uuid4().hex[:6]}@example.com"
             acc = Account(
@@ -99,15 +100,26 @@ async def setup_data() -> dict:
                     submitted_at=now - timedelta(hours=1),
                     correct_count=round(test_score / 100 * 6), total_count=6,
                     score_percent=test_score,
+                    block1_correct=blocks[0], block2_correct=blocks[1], block3_correct=blocks[2],
                     result_grade_id=grades[grade_code].id,
                 )
                 s.add(attempt)
+                await s.flush()
+                # 60% компетенций берутся из подтверждающей попытки (FR-19),
+                # а не из заявленных кандидатом навыков
+                cat.source_attempt_id = attempt.id
             return email
 
-        refs["A"] = await make_candidate("a", "python_backend", "junior", ["python", "fastapi", "sql"], 100)
-        refs["B"] = await make_candidate("b", "python_backend", "junior", ["python", "fastapi"], 70)
-        refs["C"] = await make_candidate("c", "python_backend", "middle", ["python", "fastapi", "sql"], 100, fsp=True)
-        refs["D"] = await make_candidate("d", "system_analysis", "junior", ["requirements"], 100)
+        # блоки подтверждающей попытки: A — все блоки идеальны (60 баллов),
+        # B — в среднем 2/3 блока (40 баллов), FSP у C не даёт баллов без реестра
+        refs["A"] = await make_candidate("a", "python_backend", "junior", ["python", "fastapi", "sql"], 100,
+                                         blocks=(2, 2, 2))
+        refs["B"] = await make_candidate("b", "python_backend", "junior", ["python", "fastapi"], 70,
+                                         blocks=(2, 1, 1))
+        refs["C"] = await make_candidate("c", "python_backend", "middle", ["python", "fastapi", "sql"], 100,
+                                         fsp=True, blocks=(2, 2, 2))
+        refs["D"] = await make_candidate("d", "system_analysis", "junior", ["requirements"], 100,
+                                         blocks=(2, 2, 2))
 
         # тестовая потребность: только junior -> средний грейд исключается
         acc = await s.scalar(select(Account).where(Account.email_normalized == EMPLOYER_EMAIL))
@@ -161,11 +173,11 @@ async def main() -> int:
         by_name = {i["full_name"]: i for i in items}
         a = by_name.get("Кандидат A")
         b = by_name.get("Кандидат B")
-        check("кандидат A: 60(навыки) + 30(тест 100%) + 0 = 90",
+        check("кандидат A: 60(блоки 100%) + 30(тест 100%) + 0 = 90",
               a is not None and a["score"] == 90
               and a["score_breakdown"] == {"competencies": 60.0, "test": 30.0, "fsp": 0.0},
               f"score={a and a['score']}")
-        check("кандидат B: 40(2/3 навыков) + 21(70%) + 0 = 61",
+        check("кандидат B: 40(блоки 2/3) + 21(тест 70%) + 0 = 61",
               b is not None and b["score"] == 61
               and b["score_breakdown"] == {"competencies": 40.0, "test": 21.0, "fsp": 0.0},
               f"score={b and b['score']}")

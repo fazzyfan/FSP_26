@@ -24,10 +24,13 @@ export function AssessmentPage() {
   const [remaining, setRemaining] = useState(0);
   const [result, setResult] = useState<AttemptResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const answersRef = useRef<Record<string, string>>({});
   answersRef.current = answers;
+  // Версия ответов на сервере (NFR-06): устаревший запрос не затирает свежий выбор
+  const versionRef = useRef<number>(0);
 
   const load = useCallback(() => {
     candidateApi
@@ -49,6 +52,7 @@ export function AssessmentPage() {
         .then((st) => {
           setAttempt(st);
           setRemaining(st.remaining_seconds);
+          versionRef.current = st.answers_version;
           setAnswers(Object.fromEntries(st.answers.map((a) => [a.question_id, a.option_id])));
         })
         .catch((err) => setError(err instanceof ApiError ? err.message : "Не удалось восстановить попытку"));
@@ -79,6 +83,7 @@ export function AssessmentPage() {
       const st = await candidateApi.startTest(specId, grade);
       setAttempt(st);
       setRemaining(st.remaining_seconds);
+      versionRef.current = st.answers_version;
       setAnswers(Object.fromEntries(st.answers.map((a) => [a.question_id, a.option_id])));
       setResult(null);
     } catch (err) {
@@ -94,14 +99,40 @@ export function AssessmentPage() {
   function pickAnswer(questionId: string, optionId: string) {
     const next = { ...answersRef.current, [questionId]: optionId };
     setAnswers(next);
+    setSaveError(null);
     if (!attempt) return;
-    // Автосохранение на сервере по мере выбора (перезагрузка не теряет ответы)
-    void candidateApi
+    // Автосохранение на сервере по мере выбора (перезагрузка не теряет ответы).
+    // Ошибки не игнорируются: устаревшая версия (409) — состояние перечитывается,
+    // остальные сбои показываются, чтобы пользователь не потерял ответы молча.
+    candidateApi
       .saveAttemptAnswers(
         attempt.attempt_id,
         Object.entries(next).map(([q, o]) => ({ question_id: q, option_id: o })),
+        versionRef.current,
       )
-      .catch(() => undefined);
+      .then((st) => {
+        versionRef.current = st.answers_version;
+      })
+      .catch((err) => {
+        const problem = err instanceof ApiError ? err.problem : null;
+        if (err instanceof ApiError && (err.status === 409 || problem?.code === "CONFLICT")) {
+          setSaveError("Ответы изменились в другом окне — состояние обновлено.");
+          candidateApi
+            .getAttempt(attempt.attempt_id)
+            .then((st) => {
+              setAttempt(st);
+              versionRef.current = st.answers_version;
+              setAnswers(Object.fromEntries(st.answers.map((a) => [a.question_id, a.option_id])));
+            })
+            .catch(() => undefined);
+        } else {
+          setSaveError(
+            err instanceof ApiError
+              ? `Автосохранение не удалось: ${err.message}`
+              : "Автосохранение не удалось. Проверьте соединение.",
+          );
+        }
+      });
   }
 
   async function onSubmit(e: FormEvent) {
@@ -111,10 +142,12 @@ export function AssessmentPage() {
     setError(null);
     try {
       // Сначала сохраняем последние ответы, затем отправляем (безопасный повтор)
-      await candidateApi.saveAttemptAnswers(
+      const saved = await candidateApi.saveAttemptAnswers(
         attempt.attempt_id,
         Object.entries(answersRef.current).map(([q, o]) => ({ question_id: q, option_id: o })),
+        versionRef.current,
       );
+      versionRef.current = saved.answers_version;
       const res = await candidateApi.submitAttempt(attempt.attempt_id);
       setResult(res);
       setAttempt(null);
@@ -152,6 +185,7 @@ export function AssessmentPage() {
           Ответы сохраняются автоматически — после перезагрузки страницы вы продолжите с того же места.
         </p>
         {error && <div className="alert alert-error">{error}</div>}
+        {saveError && <div className="alert alert-error">{saveError}</div>}
         {blocks.map((b) => (
           <fieldset key={b} className="block">
             <legend>Блок {b}</legend>

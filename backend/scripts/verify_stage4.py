@@ -142,6 +142,49 @@ async def main() -> int:
         r = await emp.get(f"/employer/invitations/{inv_id}/profile-pdf")
         check("PDF после отзыва — 409", r.status_code == 409, str(r.status_code))
 
+        # --- Сценарий: принять приглашение → сразу отозвать обработку данных (FR-04) ---
+        # Деактивация аккаунта должна закрыть работодателю ВСЁ: подбор, контакты,
+        # PDF и даже ФИО в списке приглашений.
+        cand2_email, cand2_id = await create_candidate()
+        async with httpx.AsyncClient(base_url=base, timeout=15.0) as cand2:
+            r = await cand2.post("/auth/login", json={"email": cand2_email, "password": PASSWORD})
+            if r.status_code != 200:
+                print(f"Вход второго кандидата не удался: {r.status_code} {r.text[:200]}")
+                return 1
+            cand2_csrf = _csrf(cand2)
+
+            r = await emp.post(
+                f"/employer/needs/{need['id']}/invitations",
+                headers={"X-CSRF-Token": emp_csrf},
+                json={"candidate_id": cand2_id, "salary_from": 90_000, "salary_to": 120_000,
+                      "message": "Сценарий деактивации: принятие, затем отзыв обработки данных."},
+            )
+            check("деактивация: приглашение создано", r.status_code in (200, 201), str(r.status_code))
+            inv2_id = r.json()["id"]
+
+            r = await cand2.post(f"/candidate/invitations/{inv2_id}/respond",
+                                 headers={"X-CSRF-Token": cand2_csrf}, json={"decision": "accept"})
+            check("деактивация: приглашение принято", r.status_code == 200, str(r.status_code))
+            r = await emp.get(f"/employer/invitations/{inv2_id}/contacts")
+            check("деактивация: контакты открыты до отзыва", r.status_code == 200, str(r.status_code))
+
+            r = await cand2.post("/candidate/consents/revoke",
+                                 headers={"X-CSRF-Token": cand2_csrf}, json={"code": "data_processing"})
+            check("деактивация: отзыв обработки данных", r.status_code == 200, str(r.status_code))
+
+            r = await emp.get(f"/employer/invitations/{inv2_id}/contacts")
+            check("деактивация: контакты закрыты работодателю", r.status_code == 409, str(r.status_code))
+            r = await emp.get(f"/employer/invitations/{inv2_id}/profile-pdf")
+            check("деактивация: PDF закрыт работодателю", r.status_code == 409, str(r.status_code))
+            r = await emp.get(f"/employer/needs/{need['id']}/matches?page_size=50")
+            cand_ids = [i["candidate_id"] for i in r.json().get("items", [])]
+            check("деактивация: кандидат исключён из подбора", cand2_id not in cand_ids,
+                  f"в выдаче {len(cand_ids)} кандидатов")
+            r = await emp.get("/employer/invitations")
+            by_id = {i["candidate_id"]: (i.get("candidate_name") or "") for i in r.json()}
+            check("деактивация: ФИО скрыто в списке приглашений", by_id.get(cand2_id, "-") == "",
+                  f"name={by_id.get(cand2_id)!r}")
+
         # --- Согласия (FR-04) ---
         r = await cand.get("/candidate/consents")
         consents = r.json()["consents"]

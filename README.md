@@ -54,9 +54,11 @@
 
 ### Проверка и приёмка (Этап 4)
 
-- `scripts/acceptance.py` — 93 автоматических проверки: основные сценарии
-  и сбойные пути (409/422/401/404) одним запуском
-- `scripts/load_test.py` — нагрузочная проверка: 300+ запросов без ошибок,
+- `scripts/acceptance.py` — автоматические проверки: основные сценарии
+  и сбойные пути (409/422/401/404) одним запуском; успех определяется кодом
+  выхода каждого дочернего скрипта, а не только маркерами [OK]/[FAIL]
+- `scripts/load_test.py` — нагрузочная проверка: справочники, health, сводка
+  оценки, подбор, запись ответов (автосохранение) и приглашения; p50/p95,
   p95 ≤ 0,5 c на локальном стенде
 - Запуск по README и Docker Compose проверяется на чистой базе
 
@@ -165,21 +167,25 @@ docker compose exec -T api python scripts/chain_check.py
 # Все проверки MVP одним запуском (smoke + цепочка + этапы 1–4):
 docker compose exec -T api python scripts/acceptance.py
 
-# Нагрузочная проверка (300+ запросов, p50/p95, ошибки):
+# Нагрузочная проверка (справочники + подбор + ответы + приглашения, p50/p95, ошибки):
 docker compose exec -T api python scripts/load_test.py
 ```
 
-### Резервное копирование (NFR-08)
+### Резервное копирование и восстановление (NFR-08)
+
+Скрипты используют `docker compose exec db ...` и запускаются **с хоста**
+(внутри контейнера API нет docker CLI):
 
 ```bash
-# Резервная копия БД в контейнер (backups/fsp-<время>.sql):
-docker compose exec -T api sh scripts/backup_db.sh
-# Скопировать копию на хост:
-docker cp fsp_2k26-api-1:/app/backups/fsp-YYYYMMDD-HHMMSS.sql .
+# Резервная копия (с хоста, из корня репозитория) → backend/backups/fsp-<время>.sql
+sh backend/scripts/backup_db.sh
 
-# Восстановление из копии внутри контейнера:
-docker cp ./fsp-YYYYMMDD-HHMMSS.sql fsp_2k26-api-1:/app/backups/
-docker compose exec -T api sh scripts/restore_db.sh backups/fsp-YYYYMMDD-HHMMSS.sql
+# Восстановление из копии (путь относительно корня репозитория):
+sh backend/scripts/restore_db.sh backend/backups/fsp-20261007-120000.sql
+
+# Подтверждение восстановления: дамп разворачивается в отдельную базу
+# fsp_restore_check, ключевые таблицы сверяются с источником, база удаляется.
+python backend/scripts/verify_backup.py
 ```
 
 ## Структура репозитория

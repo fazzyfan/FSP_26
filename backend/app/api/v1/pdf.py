@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_roles
 from app.core import errors
@@ -56,7 +57,11 @@ async def invitation_profile_pdf(
 ) -> StreamingResponse:
     """PDF профиля для работодателя: контакты только при открытом доступе (FR-27)."""
     company = await db.scalar(select(Company).where(Company.account_id == account.id))
-    inv = await db.get(Invitation, inv_id)
+    inv = await db.scalar(
+        select(Invitation)
+        .where(Invitation.id == inv_id)
+        .options(selectinload(Invitation.candidate).selectinload(CandidateProfile.account))
+    )
     if inv is None or company is None or inv.company_id != company.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")

@@ -58,8 +58,14 @@ async def main() -> int:
     for ok, okc, failc, name in results:
         status = "OK" if ok else "FAIL"
         print(f"[{status}] {name}: {okc} успешно, {failc} упало")
+    failed_scripts = [name for ok, _, _, name in results if not ok]
     print(f"\nИтого: {total_ok} проверок успешно, {total_fail} упало")
-    if total_fail:
+    # Успех приёмки определяется кодом выхода каждого дочернего скрипта,
+    # а не только найденными строками [FAIL]: падение без маркера (исключение,
+    # зависание, ненулевой код) не должно превращаться в «ПРИЁМКА ПРОЙДЕНА».
+    if total_fail or failed_scripts:
+        if failed_scripts:
+            print("Завершились с ошибкой: " + ", ".join(failed_scripts))
         print("ПРИЁМКА НЕ ПРОЙДЕНА")
         return 1
     print("ПРИЁМКА ПРОЙДЕНА: 20+ основных сценариев и проверки со сбоями — зелёные.")

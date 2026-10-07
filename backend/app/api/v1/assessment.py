@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import random
 import uuid
 from datetime import UTC, datetime
 
@@ -78,13 +79,42 @@ def _category_out(c: ConfirmedCategory) -> ConfirmedCategoryOut:
     )
 
 
+def _shuffled_options(entries: list[dict]) -> list[dict]:
+    """Варианты ответа в случайном порядке: позиция не раскрывает эталон.
+
+    Порядок задаётся на каждый запрос состояния попытки; проверка выполняется
+    по ID варианта (is_correct клиенту не передаётся), поэтому перемешивание
+    безопасно для подсчёта.
+    """
+    options = list(entries)
+    random.shuffle(options)
+    return options
+
+
 def _question_out(q: TestQuestion) -> QuestionOut:
     return QuestionOut(
         id=q.id,
         text=q.text,
         block=q.block,
-        options=[{"id": o.id, "text": o.text} for o in q.options],
+        options=_shuffled_options([{"id": o.id, "text": o.text} for o in q.options]),
     )
+
+
+def _snapshot_question_out(snapshot: list[dict]) -> list[QuestionOut]:
+    """Вопросы из снимка попытки (банк мог измениться после старта) с
+    перемешанными вариантами и без признака правильности."""
+    out: list[QuestionOut] = []
+    for q in snapshot:
+        options = [{"id": o["id"], "text": o["text"]} for o in q["options"]]
+        out.append(
+            QuestionOut(
+                id=uuid.UUID(q["id"]),
+                text=q["text"],
+                block=int(q["block"]),
+                options=_shuffled_options(options),
+            )
+        )
+    return out
 
 
 async def _attempt_state(db: AsyncSession, attempt: TestAttempt) -> AttemptStateOut:
@@ -93,7 +123,11 @@ async def _attempt_state(db: AsyncSession, attempt: TestAttempt) -> AttemptState
     if was_expired:
         await db.commit()
     grade = await assessment_service.grade_by_level(db, attempt.grade_level)
-    questions = await assessment_service.questions_for_category(db, attempt.specialization_id, attempt.grade_level)
+    if attempt.questions_snapshot:
+        questions = _snapshot_question_out(attempt.questions_snapshot)
+    else:
+        live = await assessment_service.questions_for_category(db, attempt.specialization_id, attempt.grade_level)
+        questions = [_question_out(q) for q in live]
     answers = [
         AnswerIn(question_id=a.question_id, option_id=a.option_id)
         for a in sorted(attempt.answers, key=lambda x: str(x.question_id))
@@ -108,8 +142,9 @@ async def _attempt_state(db: AsyncSession, attempt: TestAttempt) -> AttemptState
         started_at=attempt.started_at.isoformat(),
         expires_at=attempt.expires_at.isoformat(),
         remaining_seconds=assessment_service.remaining_seconds(attempt),
-        questions=[_question_out(q) for q in questions],
+        questions=questions,
         answers=answers,
+        answers_version=attempt.answers_version or 0,
     )
 
 
@@ -252,7 +287,9 @@ async def start_test(
             detail="Нужно 6 заданий в 3 блоках. Обратитесь к администратору.", recovery="retry",
         )
 
-    attempt = await assessment_service.start_attempt(db, profile.id, specialization_id, grade_level, settings)
+    attempt = await assessment_service.start_attempt(
+        db, profile.id, specialization_id, grade_level, settings, questions=questions
+    )
     return await _attempt_state(db, attempt)
 
 
@@ -278,10 +315,14 @@ async def save_attempt_answers(
     account: Account = CandidateDep,
     db: AsyncSession = Depends(get_db),
 ) -> AttemptStateOut:
-    """Сохранение ответов по мере выбора (upsert). Закрытая попытка — 409."""
+    """Сохранение ответов по мере выбора (upsert). Закрытая попытка — 409;
+    запрос с устаревшей версией ответов — 409 (NFR-06)."""
     attempt = await _own_attempt(db, account, attempt_id)
-    questions = await assessment_service.questions_for_category(db, attempt.specialization_id, attempt.grade_level)
-    valid_ids = {q.id for q in questions}
+    if attempt.questions_snapshot:
+        valid_ids = {uuid.UUID(q["id"]) for q in attempt.questions_snapshot}
+    else:
+        questions = await assessment_service.questions_for_category(db, attempt.specialization_id, attempt.grade_level)
+        valid_ids = {q.id for q in questions}
 
     # Дубли в одном запросе не допускаются
     seen: set[uuid.UUID] = set()
@@ -296,7 +337,7 @@ async def save_attempt_answers(
         seen.add(a.question_id)
         pairs.append((a.question_id, a.option_id))
 
-    await assessment_service.save_answers(db, attempt, pairs, valid_ids)
+    await assessment_service.save_answers(db, attempt, pairs, valid_ids, expected_version=payload.version)
     await db.refresh(attempt)
     return await _attempt_state(db, attempt)
 
@@ -313,11 +354,17 @@ async def submit_attempt(
 ) -> AttemptResultOut:
     """Проверка ответов, блоки и подтверждение категории (FR-13).
 
-    Только активная попытка; повторная отправка (после потери связи) — 409,
-    старые данные новыми запросами не перезаписываются.
+    Повторный submit завершённой попытки (после потери связи) не возвращает 409,
+    а восстанавливает сохранённый результат: клиент получает тот же ответ, что
+    при первой отправке. Просроченная попытка остаётся закрытой.
     """
     settings = get_settings()
     attempt = await _own_attempt(db, account, attempt_id)
+    if attempt.status == TestAttemptStatus.COMPLETED:
+        result = assessment_service.build_attempt_result(
+            attempt, settings, "Результат уже был отправлен ранее — он восстановлен."
+        )
+        return AttemptResultOut(**result)
     if attempt.status != TestAttemptStatus.IN_PROGRESS:
         raise errors.Problem(
             409, errors.INVALID_STATE, errors.E12_STATE, "Попытка уже завершена",

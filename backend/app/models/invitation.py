@@ -52,7 +52,9 @@ class Invitation(Base):
             "company_id",
             "candidate_id",
             unique=True,
-            postgresql_where=text("status IN ('pending', 'accepted')"),
+            # Открытым считается pending, а также accepted без отзыва контактов:
+            # после отзыва доступа новое приглашение компании кандидату не блокируется.
+            postgresql_where=text("status IN ('pending', 'accepted') AND contacts_revoked_at IS NULL"),
         ),
         CheckConstraint("salary_from > 0", name="ck_invitations_salary_from_positive"),
         CheckConstraint("salary_to >= salary_from", name="ck_invitations_salary_range"),
@@ -92,6 +94,17 @@ class Invitation(Base):
     @property
     def is_open(self) -> bool:
         return self.status in OPEN_STATUSES
+
+    @property
+    def blocks_new_invitation(self) -> bool:
+        """Блокирует ли это приглашение новое предложение той же компании.
+
+        Принятое приглашение с отозванными контактами открытым не считается:
+        кандидат может получить новое предложение после отзыва доступа.
+        """
+        if self.status == InvitationStatus.PENDING:
+            return True
+        return self.status == InvitationStatus.ACCEPTED and self.contacts_revoked_at is None
 
     @property
     def contacts_available(self) -> bool:

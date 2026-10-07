@@ -199,6 +199,8 @@ export interface AttemptState {
   remaining_seconds: number;
   questions: TestQuestion[];
   answers: TestAnswer[];
+  /** Версия ответов: каждый сохраняющий запрос увеличивает её (NFR-06) */
+  answers_version: number;
 }
 
 // --- Подбор (FR-18..FR-22) ---

@@ -391,11 +391,25 @@ async def seed_references(session: AsyncSession) -> dict:
     }
 
 
+def _rotate_options(options: list[tuple[str, bool]], question_index: int) -> list[tuple[str, bool]]:
+    """Детерминированная ротация вариантов: правильный ответ не всегда первый.
+
+    Смещение зависит от номера задания, поэтому позиция эталона не раскрывает
+    его. Клиенту варианты дополнительно перемешиваются на каждый запрос
+    состояния попытки (см. api/v1/assessment.py).
+    """
+    if not options:
+        return options
+    offset = question_index % len(options)
+    return options[offset:] + options[:offset]
+
+
 async def seed_test_questions(session: AsyncSession, refs: dict) -> None:
     """FR-08/FR-09: 6 заданий на каждую из 4 категорий (3 блока по 2).
 
     Идемпотентно: обновляет блоки существующих вопросов и добавляет недостающие,
     не удаляя и не перезаписывая данные (без потери при повторных запусках).
+    Варианты ответов хранятся в проверенной ротации (эталон не всегда первый).
     """
     for spec_key, spec in refs["specializations"].items():
         rows = (
@@ -419,10 +433,18 @@ async def seed_test_questions(session: AsyncSession, refs: dict) -> None:
             for idx, (text, options, explanation) in enumerate(items):
                 block = idx // 2 + 1  # 3 блока по 2 задания
                 sort_order = idx + 1
+                rotated = _rotate_options(options, idx)
                 if idx < len(existing):
                     question = existing[idx]
                     question.block = block
                     question.sort_order = sort_order
+                    # Приводим порядок вариантов к проверенной ротации (идемпотентно)
+                    opts = sorted(question.options, key=lambda o: o.sort_order)
+                    for pos, opt in enumerate(rotated, start=1):
+                        for o in opts:
+                            if o.text == opt[0] and o.is_correct == opt[1]:
+                                o.sort_order = pos
+                                break
                     continue
                 question = TestQuestion(
                     specialization_id=spec.id,
@@ -435,7 +457,7 @@ async def seed_test_questions(session: AsyncSession, refs: dict) -> None:
                 )
                 session.add(question)
                 await session.flush()
-                for opt_idx, (opt_text, is_correct) in enumerate(options, start=1):
+                for opt_idx, (opt_text, is_correct) in enumerate(rotated, start=1):
                     session.add(
                         TestQuestionOption(
                             question_id=question.id,

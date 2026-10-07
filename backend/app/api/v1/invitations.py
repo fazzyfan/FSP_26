@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import require_csrf, require_roles
 from app.core import errors
@@ -46,12 +47,17 @@ CandidateDep = Depends(require_roles(Role.CANDIDATE))
 # ---------------------------------------------------------------- employer ---
 
 def _employer_out(inv: Invitation) -> EmployerInvitationOut:
+    # После отзыва обработки данных (деактивация) ФИО кандидата не выдаётся
+    account = getattr(inv.candidate, "account", None) if inv.candidate else None
+    visible_name = ""
+    if inv.candidate is not None and account is not None and account.status.value == "active":
+        visible_name = inv.candidate.full_name
     return EmployerInvitationOut(
         id=str(inv.id),
         need_id=str(inv.need_id),
         need_title=inv.need.title if inv.need else "",
         candidate_id=str(inv.candidate_id),
-        candidate_name=inv.candidate.full_name if inv.candidate else "",
+        candidate_name=visible_name,
         salary_from=inv.salary_from,
         salary_to=inv.salary_to,
         message=inv.message,
@@ -70,12 +76,17 @@ async def _own_company(db: AsyncSession, account: Account) -> Company | None:
 async def _open_invitation(
     db: AsyncSession, company_id: uuid.UUID, candidate_id: uuid.UUID
 ) -> Invitation | None:
-    """Открытое приглашение компании кандидату (единственное)."""
+    """Открытое приглашение компании кандидату (единственное).
+
+    Принятое приглашение с отозванными контактами открытым не считается:
+    после отзыва доступа новое предложение той же компании не блокируется.
+    """
     return await db.scalar(
         select(Invitation).where(
             Invitation.company_id == company_id,
             Invitation.candidate_id == candidate_id,
             Invitation.status.in_(OPEN_STATUSES),
+            Invitation.contacts_revoked_at.is_(None),
         )
     )
 
@@ -170,12 +181,26 @@ async def create_invitation(
     try:
         await db.commit()
     except IntegrityError:
-        # Гонка: параллельный запрос уже создал открытое приглашение
+        # Гонка: параллельный запрос уже создал открытое приглашение.
+        # Идемпотентный ответ (200) допустим только при совпадении условий —
+        # иначе 409: разные условия не должны «растворяться» в существующем.
         await db.rollback()
         existing = await _open_invitation(db, company.id, candidate.id)
         if existing is None:
             raise errors.Problem(409, errors.CONFLICT, errors.E11_CONCURRENCY,
                                  "Не удалось создать приглашение, повторите запрос", recovery="retry")
+        same_terms = (
+            existing.salary_from == payload.salary_from
+            and existing.salary_to == payload.salary_to
+            and existing.message == payload.message
+        )
+        if not same_terms:
+            raise errors.Problem(
+                409, errors.CONFLICT, errors.E11_CONCURRENCY,
+                "У этой компании уже есть открытое приглашение кандидату",
+                detail="Параллельный запрос создал приглашение с другими условиями.",
+                recovery="none",
+            )
         response.status_code = 200
         return _employer_out(existing)
     await db.refresh(invitation)
@@ -218,7 +243,11 @@ async def invitation_contacts(
     Отзыв доступа закрывает контакты; повторное принятие их не восстанавливает.
     """
     company = await _own_company(db, account)
-    inv = await db.get(Invitation, inv_id)
+    inv = await db.scalar(
+        select(Invitation)
+        .where(Invitation.id == inv_id)
+        .options(selectinload(Invitation.candidate).selectinload(CandidateProfile.account))
+    )
     if inv is None or company is None or inv.company_id != company.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
@@ -297,7 +326,9 @@ async def respond_invitation(
     меняются, отозванный доступ не восстанавливается.
     """
     profile = await _own_profile(db, account)
-    inv = await db.get(Invitation, inv_id)
+    inv = await db.scalar(
+        select(Invitation).where(Invitation.id == inv_id).with_for_update()
+    )
     if inv is None or inv.candidate_id != profile.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
@@ -334,9 +365,15 @@ async def revoke_contacts(
     db: AsyncSession = Depends(get_db),
 ) -> CandidateInvitationOut:
     """Отзыв доступа к контактам (FR-27). Контакты закрываются немедленно;
-    повторное принятие приглашения доступ не восстанавливает."""
+    повторное принятие приглашения доступ не восстанавливает.
+
+    Атомарность: строка блокируется — одновременные отзывы не дают двойного
+    «успеха» и не рассинхронизируют уникальный индекс открытых приглашений.
+    """
     profile = await _own_profile(db, account)
-    inv = await db.get(Invitation, inv_id)
+    inv = await db.scalar(
+        select(Invitation).where(Invitation.id == inv_id).with_for_update()
+    )
     if inv is None or inv.candidate_id != profile.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")

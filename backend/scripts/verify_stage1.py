@@ -66,8 +66,12 @@ async def main() -> int:
         matches = (await emp.get(f"/employer/needs/{need['id']}/matches?page=1&page_size=50")).json()
         matched_ids = {m["candidate_id"] for m in matches["items"]}
 
+        # Открытым считается pending, а также accepted без отзыва контактов
+        # (после отзыва новое приглашение не блокируется)
         open_inv = next(
-            (i for i in invites if i["status"] in ("pending", "accepted") and i["candidate_id"] in matched_ids),
+            (i for i in invites
+             if i["status"] in ("pending", "accepted") and i["contacts_revoked_at"] is None
+             and i["candidate_id"] in matched_ids),
             None,
         )
         candidate_id = open_inv["candidate_id"] if open_inv else (matches["items"][0]["candidate_id"] if matches["items"] else None)
