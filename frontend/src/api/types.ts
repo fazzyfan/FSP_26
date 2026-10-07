@@ -108,9 +108,16 @@ export interface EmployerNeedIn {
 
 // --- Оценка и категория (FR-08..FR-13) ---
 
+export interface TestGradeInfo {
+  grade_code: string;
+  grade_name: string;
+  questions_count: number;
+}
+
 export interface TestInfo {
   specialization_id: string;
   specialization_name: string;
+  grades: TestGradeInfo[];
   questions_count: number;
 }
 
@@ -123,23 +130,41 @@ export interface ConfirmedCategory {
   confirmed_at: string;
 }
 
+export interface BlockResult {
+  block: number;
+  correct: number;
+  total: number;
+}
+
 export interface AttemptResult {
   attempt_id: string;
   specialization_id: string;
   specialization_name: string;
+  grade_code: string | null;
+  grade_name: string | null;
   status: string;
   correct_count: number;
   total_count: number;
   score_percent: number;
+  block_results: BlockResult[];
   passed: boolean;
-  grade_code: string | null;
-  grade_name: string | null;
   next_attempt_at: string | null;
   message: string;
 }
 
+export interface ActiveAttempt {
+  attempt_id: string;
+  specialization_id: string;
+  specialization_name: string;
+  grade_code: string;
+  grade_name: string;
+  expires_at: string;
+  remaining_seconds: number;
+}
+
 export interface AssessmentSummary {
   category: ConfirmedCategory | null;
+  active_attempt: ActiveAttempt | null;
   last_attempt: AttemptResult | null;
   next_attempt_at: string | null;
   tests: TestInfo[];
@@ -153,12 +178,27 @@ export interface QuestionOption {
 export interface TestQuestion {
   id: string;
   text: string;
+  block: number;
   options: QuestionOption[];
 }
 
 export interface TestAnswer {
   question_id: string;
   option_id: string;
+}
+
+export interface AttemptState {
+  attempt_id: string;
+  specialization_id: string;
+  specialization_name: string;
+  grade_code: string;
+  grade_name: string;
+  status: string;
+  started_at: string;
+  expires_at: string;
+  remaining_seconds: number;
+  questions: TestQuestion[];
+  answers: TestAnswer[];
 }
 
 // --- Подбор (FR-18..FR-22) ---

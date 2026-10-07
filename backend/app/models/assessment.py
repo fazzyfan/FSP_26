@@ -1,10 +1,13 @@
 """Модели оценки: вопросы теста, попытки, подтверждённая категория (FR-08..FR-13).
 
-Правила D-01..D-06 (значения в конфигурации):
-- одна активная категория (специализация + грейд) на кандидата;
-- пороги: Junior >= 50%, Middle >= 70%;
-- повтор: после неуспеха через 24 ч, после успеха через 90 дней;
-- понижение грейда результатом теста не выполняется.
+Правила MVP:
+- 4 категории: специализация (Python backend / Системный анализ) × грейд
+  (Junior / Middle); кандидат выбирает категорию перед тестом;
+- тест выбранной категории: 6 заданий в 3 блоках (по 2 задания);
+- категория подтверждается при суммарном результате >= 70% и >= 50%
+  в каждом блоке;
+- одна активная попытка; серверный таймер 20 минут (expires_at);
+- пересдача той же категории — через 24 часа, смена подтверждённой — через 90 дней.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Text, text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Integer, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +26,7 @@ from app.db.base import Base
 class TestAttemptStatus(str, enum.Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
+    EXPIRED = "expired"
 
 
 def utcnow() -> datetime:
@@ -30,7 +34,7 @@ def utcnow() -> datetime:
 
 
 class TestQuestion(Base):
-    """Вопрос теста по специализации. grade_level — сложность (1=Junior, 2=Middle), D-02."""
+    """Вопрос теста по специализации и грейду. block — раздел теста (1..3)."""
 
     __tablename__ = "test_questions"
 
@@ -38,7 +42,8 @@ class TestQuestion(Base):
     specialization_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("specializations.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    grade_level: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    grade_level: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # 1=Junior, 2=Middle
+    block: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # раздел 1..3
     text: Mapped[str] = mapped_column(Text, nullable=False)
     explanation: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -69,7 +74,12 @@ class TestQuestionOption(Base):
 
 
 class TestAttempt(Base):
-    """Попытка теста кандидата: результат и ссылка на подтверждённую категорию."""
+    """Попытка теста выбранной категории.
+
+    Попытка создаётся на старте (status=in_progress) и живёт до expires_at
+    (серверный таймер 20 минут). Ответы сохраняются по мере выбора и
+    восстанавливаются после перезагрузки. После submit попытка закрыта.
+    """
 
     __tablename__ = "test_attempts"
 
@@ -80,16 +90,22 @@ class TestAttempt(Base):
     specialization_id: Mapped[uuid.UUID] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("specializations.id", ondelete="RESTRICT"), nullable=False
     )
+    grade_level: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # выбранная категория
     status: Mapped[TestAttemptStatus] = mapped_column(
         Enum(TestAttemptStatus, values_callable=lambda e: [m.value for m in e]),
         nullable=False,
         default=TestAttemptStatus.IN_PROGRESS,
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     correct_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     score_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Результаты по блокам (по 2 задания в блоке)
+    block1_correct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    block2_correct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    block3_correct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     result_grade_id: Mapped[uuid.UUID | None] = mapped_column(
         PgUUID(as_uuid=True), ForeignKey("grades.id", ondelete="SET NULL"), nullable=True
     )
@@ -102,9 +118,10 @@ class TestAttempt(Base):
 
 
 class TestAttemptAnswer(Base):
-    """Ответ кандидата на вопрос в рамках попытки."""
+    """Ответ кандидата на вопрос в рамках попытки (один на вопрос, upsert)."""
 
     __tablename__ = "test_attempt_answers"
+    __table_args__ = (UniqueConstraint("attempt_id", "question_id", name="uq_attempt_answer_question"),)
 
     id: Mapped[uuid.UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     attempt_id: Mapped[uuid.UUID] = mapped_column(
@@ -121,10 +138,11 @@ class TestAttemptAnswer(Base):
 
 
 class ConfirmedCategory(Base):
-    """Подтверждённая категория: специализация + грейд (FR-13, D-01).
+    """Подтверждённая категория: специализация + грейд (FR-13).
 
     Одна активная категория на кандидата (partial unique index по is_active);
-    старые результаты хранятся с is_active=False.
+    старые результаты хранятся с is_active=False. Смена доступна через
+    90 дней после назначения или смены (confirmed_at).
     """
 
     __tablename__ = "confirmed_categories"

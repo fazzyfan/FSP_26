@@ -78,52 +78,89 @@ async def main() -> int:
         if r.json() is None:
             print("  >> Сначала заполните профиль кандидата (seed делает это автоматически)")
 
-        # --- 2. Сводка оценки ---
+        # --- 2. Сводка оценки: 4 категории (2 специализации × 2 грейда) ---
         r = await cand.get("/candidate/assessment")
         check("сводка оценки", r.status_code == 200, str(r.status_code))
         summary = r.json()
         tests = {t["specialization_name"]: t for t in summary["tests"]}
         spec = tests.get("Python backend")
-        check("доступен тест Python backend", spec is not None and spec["questions_count"] == 6,
+        check("тест Python backend: 12 заданий, 2 грейда",
+              spec is not None and spec["questions_count"] == 12 and len(spec["grades"]) == 2,
               str(spec) if spec else "нет")
         if spec is None:
             print("\nПровалено: нет вопросов по специализации Python backend")
             return 1
 
-        # --- 3. Вопросы + отправка ответов (если ещё нет категории/кулдауна) ---
-        r = await cand.get(f"/candidate/assessment/tests/{spec['specialization_id']}/questions")
-        check("получение вопросов", r.status_code == 200 and len(r.json()) == 6, str(r.status_code))
-        questions = r.json()
+        # --- 3. Старт попытки выбранной категории → ответы → восстановление → отправка ---
+        grade_code = summary["category"]["grade_code"] if summary.get("category") else "junior"
+        r = await cand.post(
+            f"/candidate/assessment/tests/{spec['specialization_id']}/start",
+            headers={"X-CSRF-Token": _csrf(cand)},
+            json={"grade": grade_code},
+        )
+        if r.status_code == 201:
+            st = r.json()
+            attempt_id = st["attempt_id"]
+            check("старт попытки", True, f"{grade_code} {attempt_id}")
+            qs = st["questions"]
+            check("6 заданий в 3 блоках",
+                  len(qs) == 6 and sorted({q["block"] for q in qs}) == [1, 2, 3],
+                  f"{len(qs)} заданий")
+            check("таймер 20 минут задан", st["remaining_seconds"] > 0 and st["remaining_seconds"] <= 20 * 60,
+                  f"{st['remaining_seconds']} c")
 
-        need_submit = summary["category"] is None
-        if summary["next_attempt_at"]:
-            need_submit = False  # кулдаун после предыдущей попытки
-
-        if need_submit:
+            # правильные ответы сохраняются по мере выбора
             correct = await correct_answers()
             answers = [
                 {"question_id": q["id"], "option_id": correct[q["id"]]}
-                for q in questions if q["id"] in correct
+                for q in qs if q["id"] in correct
             ]
-            r = await cand.post(
-                f"/candidate/assessment/tests/{spec['specialization_id']}/submit",
+            r = await cand.put(
+                f"/candidate/assessment/attempts/{attempt_id}/answers",
                 headers={"X-CSRF-Token": _csrf(cand)},
                 json={"answers": answers},
             )
-            if r.status_code == 409:
-                # кулдаун — перечитаем сводку
-                r = await cand.get("/candidate/assessment")
-                summary = r.json()
-                check("кулдаун теста (повторный прогон)",
-                      summary["category"] is not None and summary["last_attempt"] is not None,
-                      summary.get("next_attempt_at") or "")
-            else:
-                check("отправка теста", r.status_code == 200, str(r.status_code))
-                if r.status_code == 200:
-                    result = r.json()
-                    check("тест пройден", result["passed"] is True, f"score={result['score_percent']}%")
-                    check("категория подтверждена", result["grade_code"] in ("junior", "middle"),
-                          f"grade={result['grade_code']}")
+            check("сохранение ответов", r.status_code == 200 and len(r.json()["answers"]) == 6, str(r.status_code))
+
+            # восстановление после перезагрузки страницы
+            r = await cand.get(f"/candidate/assessment/attempts/{attempt_id}")
+            restored = r.status_code == 200 and len(r.json()["answers"]) == 6 and r.json()["remaining_seconds"] > 0
+            check("восстановление попытки", restored, str(r.status_code))
+
+            # отправка: суммарно 100%, каждый блок 2/2
+            r = await cand.post(
+                f"/candidate/assessment/attempts/{attempt_id}/submit",
+                headers={"X-CSRF-Token": _csrf(cand)},
+            )
+            check("отправка теста", r.status_code == 200 and r.json()["passed"] is True,
+                  f"score={r.json().get('score_percent')}%")
+            if r.status_code == 200:
+                result = r.json()
+                check("все блоки пройдены",
+                      all(b["correct"] == b["total"] and b["total"] == 2 for b in result["block_results"]),
+                      str(result["block_results"]))
+                check("категория подтверждена", result["grade_code"] == grade_code,
+                      f"grade={result['grade_code']}")
+
+            # защита от повторной отправки и перезаписи
+            r2 = await cand.post(
+                f"/candidate/assessment/attempts/{attempt_id}/submit",
+                headers={"X-CSRF-Token": _csrf(cand)},
+            )
+            check("повторная отправка 409", r2.status_code == 409, str(r2.status_code))
+            r2 = await cand.put(
+                f"/candidate/assessment/attempts/{attempt_id}/answers",
+                headers={"X-CSRF-Token": _csrf(cand)},
+                json={"answers": answers},
+            )
+            check("перезапись завершённой попытки 409", r2.status_code == 409, str(r2.status_code))
+        elif r.status_code == 409:
+            # кулдаун (24 ч для той же категории) или 90 дней для смены — повторный прогон
+            check("кулдаун теста (повторный прогон)",
+                  summary["category"] is not None or summary["last_attempt"] is not None,
+                  r.json().get("detail", ""))
+        else:
+            check("старт попытки", False, f"{r.status_code} {r.text[:300]}")
 
         # --- 4. Категория в сводке ---
         r = await cand.get("/candidate/assessment")

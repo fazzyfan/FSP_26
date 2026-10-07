@@ -27,7 +27,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s [%(nam
 
 DEMO_PASSWORD = "DemoPass2026!"
 
-# Вопросы теста: специализация -> список (grade_level, текст, [(вариант, is_correct), ...], объяснение)
+# Вопросы теста — базовый набор (уже существующие): специализация -> (grade_level, текст, варианты, объяснение)
 TEST_QUESTIONS: dict[str, list[tuple[int, str, list[tuple[str, bool]], str | None]]] = {
     "python_backend": [
         (
@@ -167,6 +167,143 @@ TEST_QUESTIONS: dict[str, list[tuple[int, str, list[tuple[str, bool]], str | Non
     ],
 }
 
+# Дополнительные вопросы до 6 на грейд (3 блока по 2 задания).
+# Структура: специализация -> {grade_level: [(текст, варианты, объяснение), ...]}
+NEW_QUESTIONS: dict[str, dict[int, list[tuple[str, list[tuple[str, bool]], str | None]]]] = {
+    "python_backend": {
+        1: [
+            (
+                "Что такое виртуальное окружение и зачем оно нужно?",
+                [
+                    ("Изоляция зависимостей проекта от системного Python", True),
+                    ("Ускорение работы интерпретатора", False),
+                    ("Хранение паролей приложения", False),
+                    ("Автоматическая отправка кода в репозиторий", False),
+                ],
+                "venv изолирует зависимости конкретного проекта от остальной системы.",
+            ),
+            (
+                "Какой HTTP-метод обычно используют для создания нового ресурса?",
+                [
+                    ("POST", True),
+                    ("GET", False),
+                    ("HEAD", False),
+                    ("PATCH", False),
+                ],
+                "POST предназначен для создания ресурсов; GET — чтение, PATCH — частичное обновление.",
+            ),
+            (
+                "Что выведет выражение print(2 ** 3) в Python?",
+                [
+                    ("8", True),
+                    ("6", False),
+                    ("23", False),
+                    ("9", False),
+                ],
+                "Оператор ** — возведение в степень: 2 ** 3 = 8.",
+            ),
+        ],
+        2: [
+            (
+                "Чем INNER JOIN отличается от LEFT JOIN?",
+                [
+                    ("INNER возвращает только совпавшие строки обеих таблиц, LEFT — все строки левой", True),
+                    ("Это синонимы", False),
+                    ("INNER удаляет строки из левой таблицы", False),
+                    ("LEFT работает только с одной таблицей", False),
+                ],
+                "INNER JOIN исключает несовпавшие строки; LEFT JOIN сохраняет все строки левой таблицы.",
+            ),
+            (
+                "Как корректно обрабатывать ошибки в REST API?",
+                [
+                    ("Стандартные HTTP-статусы и структурированное тело ошибки", True),
+                    ("Всегда возвращать 200 с текстом ошибки", False),
+                    ("Возвращать только код 500 при любой ошибке", False),
+                    ("Скрывать все ошибки из журнала", False),
+                ],
+                "Используются корректные статусы и единый формат тела ошибки (например, RFC 9457).",
+            ),
+            (
+                "Зачем нужны миграции схемы БД (например, Alembic)?",
+                [
+                    ("Управлять изменениями схемы версионированно и воспроизводимо", True),
+                    ("Хранить данные пользователей", False),
+                    ("Ускорять SELECT-запросы", False),
+                    ("Шифровать резервные копии", False),
+                ],
+                "Миграции фиксируют изменения схемы и применяются одинаково во всех средах.",
+            ),
+        ],
+    },
+    "system_analysis": {
+        1: [
+            (
+                "Что такое BPMN?",
+                [
+                    ("Нотация моделирования бизнес-процессов", True),
+                    ("Язык программирования", False),
+                    ("Протокол интеграции", False),
+                    ("Формат хранения данных", False),
+                ],
+                "BPMN — нотация для описания бизнес-процессов наглядными диаграммами.",
+            ),
+            (
+                "Зачем расставлять приоритеты требований?",
+                [
+                    ("Чтобы фокусироваться на важном в ограниченные сроки", True),
+                    ("Чтобы удалить лишние функции из системы", False),
+                    ("Чтобы увеличить бюджет проекта", False),
+                    ("Чтобы заменить тестирование", False),
+                ],
+                "Приоритизация помогает команде сначала реализовывать самое ценное.",
+            ),
+            (
+                "Что такое user story (пользовательская история)?",
+                [
+                    ("Короткое описание потребности пользователя от его лица", True),
+                    ("Техническое задание разработчику", False),
+                    ("Диаграмма классов", False),
+                    ("Отчёт о нагрузочном тестировании", False),
+                ],
+                "User story формулирует цель пользователя: «Как <роль>, я хочу <действие>».",
+            ),
+        ],
+        2: [
+            (
+                "Что такое трассируемость требований?",
+                [
+                    ("Связь требований с источниками и реализацией для проверки покрытия", True),
+                    ("Хранение требований в одной папке", False),
+                    ("Подпись требований заказчиком", False),
+                    ("Оценка трудоёмкости", False),
+                ],
+                "Трассируемость позволяет убедиться, что каждое требование реализовано и проверено.",
+            ),
+            (
+                "Зачем фиксировать контракт REST API на этапе проектирования?",
+                [
+                    ("Чтобы согласовать запросы, ответы и ошибки до разработки", True),
+                    ("Чтобы заменить юнит-тесты", False),
+                    ("Чтобы определить стоимость серверов", False),
+                    ("Чтобы ускорить интернет-соединение", False),
+                ],
+                "Контракт согласует ожидания команды и клиентов до начала реализации.",
+            ),
+            (
+                "Что описывает OpenAPI (Swagger)-спецификация?",
+                [
+                    ("Структуру HTTP API: пути, параметры, схемы данных", True),
+                    ("Архитектуру микросервисов на диаграмме", False),
+                    ("План релизов продукта", False),
+                    ("Процесс найма команды", False),
+                ],
+                "OpenAPI описывает поверхность HTTP API машинночитаемым образом.",
+            ),
+        ],
+    },
+}
+
 
 async def _get_or_create(session: AsyncSession, model, **kwargs):
     existing = await session.scalar(select(model).where(*[getattr(model, k) == v for k, v in kwargs.items()]))
@@ -244,36 +381,62 @@ async def seed_references(session: AsyncSession) -> dict:
 
 
 async def seed_test_questions(session: AsyncSession, refs: dict) -> None:
-    """FR-08/FR-09: по 6 вопросов на специализацию (3 Junior + 3 Middle)."""
-    for spec_key, questions in TEST_QUESTIONS.items():
-        spec = refs["specializations"][spec_key]
-        existing = await session.scalar(
-            select(func.count(TestQuestion.id)).where(TestQuestion.specialization_id == spec.id)
-        )
-        if existing:
-            logger.info("Вопросы для %s уже есть (%s шт.), пропускаю", spec_key, existing)
-            continue
-        for idx, (grade_level, text, options, explanation) in enumerate(questions, start=1):
-            question = TestQuestion(
-                specialization_id=spec.id,
-                grade_level=grade_level,
-                text=text,
-                explanation=explanation,
-                is_active=True,
-                sort_order=idx,
+    """FR-08/FR-09: 6 заданий на каждую из 4 категорий (3 блока по 2).
+
+    Идемпотентно: обновляет блоки существующих вопросов и добавляет недостающие,
+    не удаляя и не перезаписывая данные (без потери при повторных запусках).
+    """
+    for spec_key, spec in refs["specializations"].items():
+        rows = (
+            await session.scalars(
+                select(TestQuestion)
+                .where(TestQuestion.specialization_id == spec.id)
+                .order_by(TestQuestion.grade_level, TestQuestion.sort_order)
             )
-            session.add(question)
-            await session.flush()
-            for opt_idx, (opt_text, is_correct) in enumerate(options, start=1):
-                session.add(
-                    TestQuestionOption(
-                        question_id=question.id,
-                        text=opt_text,
-                        is_correct=is_correct,
-                        sort_order=opt_idx,
-                    )
+        ).all()
+        by_grade: dict[int, list[TestQuestion]] = {1: [], 2: []}
+        for q in rows:
+            by_grade.setdefault(q.grade_level, []).append(q)
+
+        base_by_grade: dict[int, list[tuple[str, list[tuple[str, bool]], str | None]]] = {1: [], 2: []}
+        for grade_level, text, options, explanation in TEST_QUESTIONS[spec_key]:
+            base_by_grade.setdefault(grade_level, []).append((text, options, explanation))
+
+        for grade_level in (1, 2):
+            items = base_by_grade[grade_level] + NEW_QUESTIONS.get(spec_key, {}).get(grade_level, [])
+            existing = by_grade.get(grade_level, [])
+            for idx, (text, options, explanation) in enumerate(items):
+                block = idx // 2 + 1  # 3 блока по 2 задания
+                sort_order = idx + 1
+                if idx < len(existing):
+                    question = existing[idx]
+                    question.block = block
+                    question.sort_order = sort_order
+                    continue
+                question = TestQuestion(
+                    specialization_id=spec.id,
+                    grade_level=grade_level,
+                    block=block,
+                    text=text,
+                    explanation=explanation,
+                    is_active=True,
+                    sort_order=sort_order,
                 )
-        logger.info("Добавлены вопросы теста по специализации %s", spec_key)
+                session.add(question)
+                await session.flush()
+                for opt_idx, (opt_text, is_correct) in enumerate(options, start=1):
+                    session.add(
+                        TestQuestionOption(
+                            question_id=question.id,
+                            text=opt_text,
+                            is_correct=is_correct,
+                            sort_order=opt_idx,
+                        )
+                    )
+            logger.info(
+                "Категория %s / уровень %s: %s заданий в 3 блоках",
+                spec_key, grade_level, len(items),
+            )
     await session.commit()
 
 

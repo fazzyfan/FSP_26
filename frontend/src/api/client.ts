@@ -118,12 +118,21 @@ export const candidateApi = {
     api<import("./types").CandidateProfile>("/candidate/profile", { method: "PUT", body }),
   // Оценка и категория (FR-08..FR-13)
   getAssessment: () => api<import("./types").AssessmentSummary>("/candidate/assessment"),
-  getTestQuestions: (specializationId: string) =>
-    api<import("./types").TestQuestion[]>(`/candidate/assessment/tests/${specializationId}/questions`),
-  submitTest: (specializationId: string, answers: import("./types").TestAnswer[]) =>
-    api<import("./types").AttemptResult>(`/candidate/assessment/tests/${specializationId}/submit`, {
+  startTest: (specializationId: string, grade: "junior" | "middle") =>
+    api<import("./types").AttemptState>(`/candidate/assessment/tests/${specializationId}/start`, {
       method: "POST",
+      body: { grade },
+    }),
+  getAttempt: (attemptId: string) =>
+    api<import("./types").AttemptState>(`/candidate/assessment/attempts/${attemptId}`),
+  saveAttemptAnswers: (attemptId: string, answers: import("./types").TestAnswer[]) =>
+    api<import("./types").AttemptState>(`/candidate/assessment/attempts/${attemptId}/answers`, {
+      method: "PUT",
       body: { answers },
+    }),
+  submitAttempt: (attemptId: string) =>
+    api<import("./types").AttemptResult>(`/candidate/assessment/attempts/${attemptId}/submit`, {
+      method: "POST",
     }),
   // Приглашения (FR-23..FR-27)
   listInvitations: () => api<import("./types").CandidateInvitation[]>("/candidate/invitations"),
