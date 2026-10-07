@@ -178,13 +178,26 @@ async def main() -> int:
         needs = r.json()
         need = next((n for n in needs if n["title"] == "Backend-разработчик (Python)"), needs[0])
 
-        r = await emp.get(f"/employer/needs/{need['id']}/matches")
+        r = await emp.get(f"/employer/needs/{need['id']}/matches?page=1&page_size=10")
         check("подбор кандидатов", r.status_code == 200, str(r.status_code))
-        matches = r.json()
-        check("в подборе есть кандидаты", len(matches) > 0, f"{len(matches)} совпадений")
-        match = max(matches, key=lambda m: m["score"]) if matches else None
+        page_data = r.json()
+        matches = page_data["items"]
+        check("в подборе есть кандидаты", len(matches) > 0 and page_data["total"] > 0,
+              f"total={page_data['total']}")
+        # Предпочитаем демо-кандидата (имя может быть изменено smoke-тестом),
+        # исключая контрольных кандидатов из скриптов этапов
+        match = next(
+            (m for m in matches if not m["full_name"].startswith(("Кандидат ", "Этап2 "))),
+            None,
+        )
+        if match is None:
+            match = max(matches, key=lambda m: m["score"]) if matches else None
         if match:
             check("кандидат с ненулевым баллом", match["score"] > 0, f"score={match['score']}")
+            bd = match["score_breakdown"]
+            check("разбивка балла 60/30/10",
+                  round(bd["competencies"] + bd["test"] + bd["fsp"]) == match["score"],
+                  f"60/30/10 -> {match['score']}")
             check("объяснение подбора", len(match["reasons"]) >= 2, "; ".join(match["reasons"][:2]))
 
         # --- 6. Приглашение (обязательные условия; повторы не создают дублей) ---

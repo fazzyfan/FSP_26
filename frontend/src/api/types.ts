@@ -203,6 +203,12 @@ export interface AttemptState {
 
 // --- Подбор (FR-18..FR-22) ---
 
+export interface ScoreBreakdown {
+  competencies: number;
+  test: number;
+  fsp: number;
+}
+
 export interface MatchCandidate {
   candidate_id: string;
   full_name: string;
@@ -211,8 +217,17 @@ export interface MatchCandidate {
   grade_name: string;
   experience_months: number;
   score: number;
+  score_breakdown: ScoreBreakdown;
   matched_skills: string[];
   reasons: string[];
+}
+
+export interface MatchPage {
+  items: MatchCandidate[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
 }
 
 // --- Приглашения (FR-23..FR-27) ---

@@ -154,9 +154,19 @@ export const employerApi = {
   listNeeds: () => api<import("./types").EmployerNeed[]>("/employer/needs"),
   createNeed: (body: import("./types").EmployerNeedIn) =>
     api<import("./types").EmployerNeed>("/employer/needs", { method: "POST", body }),
-  // Подбор (FR-18..FR-22)
-  listMatches: (needId: string) =>
-    api<import("./types").MatchCandidate[]>(`/employer/needs/${needId}/matches`),
+  // Подбор (FR-18..FR-22): фильтры и пагинация
+  listMatches: (
+    needId: string,
+    params?: { page?: number; page_size?: number; grade?: string | null; min_score?: number },
+  ) => {
+    const q = new URLSearchParams();
+    if (params?.page) q.set("page", String(params.page));
+    if (params?.page_size) q.set("page_size", String(params.page_size));
+    if (params?.grade) q.set("grade", params.grade);
+    if (params?.min_score) q.set("min_score", String(params.min_score));
+    const qs = q.toString();
+    return api<import("./types").MatchPage>(`/employer/needs/${needId}/matches${qs ? `?${qs}` : ""}`);
+  },
   // Приглашения (FR-23..FR-27)
   listInvitations: () => api<import("./types").EmployerInvitation[]>("/employer/invitations"),
   createInvitation: (needId: string, body: {
