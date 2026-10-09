@@ -285,24 +285,37 @@ async def save_answers(
             recovery="refresh", extra={"current_version": attempt.answers_version},
         )
 
-    existing = await attempt_answers_map(db, attempt)
-    for qid, opt_id in answers:
-        if qid not in valid_question_ids:
-            raise errors.Problem(
-                422, errors.VALIDATION_FAILED, errors.E04_REFERENCE, "Неизвестный вопрос",
-                errors=[{"field": "answers", "code": "REFERENCE_INVALID", "error_class": "E04",
-                         "message": "Вопрос не входит в тест этой категории"}],
-                recovery="correct_input",
-            )
-        answer = existing.get(qid)
-        if answer is None:
-            answer = TestAttemptAnswer(attempt_id=attempt.id, question_id=qid, option_id=opt_id)
-            db.add(answer)
-            existing[qid] = answer
-        else:
-            answer.option_id = opt_id
-    attempt.answers_version += 1
-    await db.commit()
+    # Параллельные автосохранения одной попытки (двойной клик, ретраи клиента)
+    # могут столкнуться на unique (attempt_id, question_id) — один ретрай
+    # после отката решает гонку, дубликаты не создаются.
+    from sqlalchemy.exc import IntegrityError
+
+    last_error: IntegrityError | None = None
+    for _retry in range(2):
+        existing = await attempt_answers_map(db, attempt)
+        try:
+            for qid, opt_id in answers:
+                if qid not in valid_question_ids:
+                    raise errors.Problem(
+                        422, errors.VALIDATION_FAILED, errors.E04_REFERENCE, "Неизвестный вопрос",
+                        errors=[{"field": "answers", "code": "REFERENCE_INVALID", "error_class": "E04",
+                                 "message": "Вопрос не входит в тест этой категории"}],
+                        recovery="correct_input",
+                    )
+                answer = existing.get(qid)
+                if answer is None:
+                    answer = TestAttemptAnswer(attempt_id=attempt.id, question_id=qid, option_id=opt_id)
+                    db.add(answer)
+                    existing[qid] = answer
+                else:
+                    answer.option_id = opt_id
+            attempt.answers_version += 1
+            await db.commit()
+            return
+        except IntegrityError as exc:
+            await db.rollback()
+            last_error = exc
+    raise last_error  # pragma: no cover — дважды подряд одна и та же гонка
 
 
 def compute_block_result(attempt: TestAttempt) -> dict[int, tuple[int, int]]:

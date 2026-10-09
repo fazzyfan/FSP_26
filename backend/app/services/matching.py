@@ -102,7 +102,8 @@ async def match_candidates_for_need(
 
     # Подтверждающие попытки: только успешные и именно по активной категории.
     # Никаких «последних попыток» другой категории или проваленных.
-    attempt_ids = {c.source_attempt_id for _, c in pairs if c.source_attempt_id is not None}
+    # pairs — кортежи (категория, профиль).
+    attempt_ids = {c.source_attempt_id for c, _ in pairs if c.source_attempt_id is not None}
     confirming: dict[uuid.UUID, TestAttempt] = {}
     if attempt_ids:
         confirming = {

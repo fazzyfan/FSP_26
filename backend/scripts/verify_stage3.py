@@ -52,6 +52,7 @@ async def setup_data() -> dict:
         from sqlalchemy import delete
 
         await s.execute(delete(Account).where(Account.email_normalized.like("stage2-%")))
+        await s.execute(delete(Account).where(Account.email_normalized.like("stage4-%")))
         await s.execute(delete(Account).where(Account.email_normalized.like("match-%")))
         await s.execute(delete(EmployerNeed).where(EmployerNeed.title.like("Этап3:%")))
 

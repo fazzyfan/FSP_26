@@ -23,6 +23,62 @@ import uuid
 import httpx
 
 PASSWORD = "DemoPass2026!"
+CANDIDATE_EMAIL = "candidate@example.com"
+
+
+async def _force_attempt(spec_id: str, grade_code: str) -> str | None:
+    """Резерв: создаёт активную попытку демо-кандидата напрямую в БД.
+
+    Нужен, когда демо-кандидат в кулдауне (24 ч после пересдачи) и API-старт
+    возвращает 409 — путь записи ответов всё равно должен быть под нагрузкой.
+    """
+    import sys as _sys
+    import uuid as _uuid
+    from datetime import UTC, datetime, timedelta
+    from pathlib import Path as _Path
+
+    from sqlalchemy import select
+
+    # scripts/ лежит в backend/scripts — добавляем backend в sys.path,
+    # если пакет app ещё не доступен (запуск как скрипта)
+    _root = str(_Path(__file__).resolve().parents[1])
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+
+    from app.db.base import async_session_factory
+    from app.models.account import Account
+    from app.models.assessment import TestAttempt, TestAttemptStatus, TestQuestion
+    from app.models.candidate import CandidateProfile
+
+    level = {"junior": 1, "middle": 2}.get(grade_code)
+    if level is None:
+        return None
+    async with async_session_factory() as s:
+        acc = await s.scalar(select(Account).where(Account.email_normalized == CANDIDATE_EMAIL))
+        if acc is None:
+            return None
+        prof = await s.scalar(select(CandidateProfile).where(CandidateProfile.account_id == acc.id))
+        if prof is None:
+            return None
+        questions = (
+            await s.scalars(
+                select(TestQuestion).where(
+                    TestQuestion.specialization_id == _uuid.UUID(spec_id),
+                    TestQuestion.grade_level == level,
+                    TestQuestion.is_active.is_(True),
+                ).order_by(TestQuestion.block, TestQuestion.sort_order)
+            )
+        ).all()
+        if len(questions) != 6:
+            return None
+        now = datetime.now(UTC)
+        attempt = TestAttempt(
+            candidate_id=prof.id, specialization_id=_uuid.UUID(spec_id), grade_level=level,
+            status=TestAttemptStatus.IN_PROGRESS, started_at=now, expires_at=now + timedelta(minutes=20),
+        )
+        s.add(attempt)
+        await s.commit()
+        return str(attempt.id)
 
 if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -133,23 +189,43 @@ async def main() -> int:
         summary = (await c.get(f"{api}/candidate/assessment", headers=cand_headers)).json()
         tests = summary.get("tests") or []
         started = False
-        if tests:
+        # Если категория уже подтверждена — тестируем только её (смена заблокирована
+        # на 90 дней); иначе берём первый доступный тест
+        if summary.get("category"):
+            spec_id = summary["category"]["specialization_id"]
+            grade = summary["category"]["grade_code"]
+        elif tests:
             spec_id = tests[0]["specialization_id"]
             grade = tests[0]["grades"][0]["grade_code"]
+        else:
+            spec_id = None
+        if spec_id:
             r = await c.post(
                 f"{api}/candidate/assessment/tests/{spec_id}/start",
                 headers=cand_headers, json={"grade": grade},
             )
+            attempt_id = None
             if r.status_code in (200, 201):
                 state = r.json()
+                attempt_id = state["attempt_id"]
                 questions = state.get("questions") or []
+            else:
+                # Кулдаун демо-кандидата: создаём попытку напрямую в БД,
+                # чтобы путь записи ответов всё равно был под нагрузкой
+                attempt_id = await _force_attempt(spec_id, grade)
+                if attempt_id:
+                    r2 = await c.get(f"{api}/candidate/assessment/attempts/{attempt_id}", headers=cand_headers)
+                    questions = r2.json().get("questions") or [] if r2.status_code == 200 else []
+                else:
+                    questions = []
+            if attempt_id and questions:
                 # эталон не нужен: нагрузка проверяет путь записи, а не результат
                 pairs = [{"question_id": q["id"], "option_id": q["options"][0]["id"]} for q in questions]
                 sem4 = asyncio.Semaphore(10)
                 # version не передаём: параллельные потоки не должны конфликтовать
                 # на версии в нагрузочном сценарии (проверка версий — в acceptance)
                 await asyncio.gather(*[
-                    worker(c, "PUT", f"{api}/candidate/assessment/attempts/{state['attempt_id']}/answers",
+                    worker(c, "PUT", f"{api}/candidate/assessment/attempts/{attempt_id}/answers",
                            sem4, lat_save, errors, headers=cand_headers,
                            json_body={"answers": pairs},
                            ok_codes={200}, label="save_answers") for _ in range(20)

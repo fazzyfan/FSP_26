@@ -46,12 +46,18 @@ CandidateDep = Depends(require_roles(Role.CANDIDATE))
 
 # ---------------------------------------------------------------- employer ---
 
-def _employer_out(inv: Invitation) -> EmployerInvitationOut:
+def _inv_with_account(stmt):
+    """Eager-load кандидата и его аккаунта: проверка статуса без ленивых запросов."""
+    return stmt.options(selectinload(Invitation.candidate).selectinload(CandidateProfile.account))
+
+
+def _employer_out(inv: Invitation, profile: CandidateProfile | None = None) -> EmployerInvitationOut:
     # После отзыва обработки данных (деактивация) ФИО кандидата не выдаётся
-    account = getattr(inv.candidate, "account", None) if inv.candidate else None
+    prof = profile if profile is not None else inv.candidate
+    account = getattr(prof, "account", None) if prof is not None else None
     visible_name = ""
-    if inv.candidate is not None and account is not None and account.status.value == "active":
-        visible_name = inv.candidate.full_name
+    if prof is not None and account is not None and account.status.value == "active":
+        visible_name = prof.full_name
     return EmployerInvitationOut(
         id=str(inv.id),
         need_id=str(inv.need_id),
@@ -82,11 +88,13 @@ async def _open_invitation(
     после отзыва доступа новое предложение той же компании не блокируется.
     """
     return await db.scalar(
-        select(Invitation).where(
-            Invitation.company_id == company_id,
-            Invitation.candidate_id == candidate_id,
-            Invitation.status.in_(OPEN_STATUSES),
-            Invitation.contacts_revoked_at.is_(None),
+        _inv_with_account(
+            select(Invitation).where(
+                Invitation.company_id == company_id,
+                Invitation.candidate_id == candidate_id,
+                Invitation.status.in_(OPEN_STATUSES),
+                Invitation.contacts_revoked_at.is_(None),
+            )
         )
     )
 
@@ -101,9 +109,11 @@ async def employer_list_invitations(
         return []
     invites = (
         await db.scalars(
-            select(Invitation)
-            .where(Invitation.company_id == company.id)
-            .order_by(Invitation.created_at.desc())
+            _inv_with_account(
+                select(Invitation)
+                .where(Invitation.company_id == company.id)
+                .order_by(Invitation.created_at.desc())
+            )
         )
     ).all()
     return [_employer_out(i) for i in invites]
@@ -204,7 +214,8 @@ async def create_invitation(
         response.status_code = 200
         return _employer_out(existing)
     await db.refresh(invitation)
-    return _employer_out(invitation)
+    # Вновь созданная строка ещё не несёт кандидата — передаём уже загруженный профиль
+    return _employer_out(invitation, profile=candidate)
 
 
 @router.post(
@@ -218,7 +229,7 @@ async def withdraw_invitation(
     db: AsyncSession = Depends(get_db),
 ) -> EmployerInvitationOut:
     company = await _own_company(db, account)
-    inv = await db.get(Invitation, inv_id)
+    inv = await db.scalar(_inv_with_account(select(Invitation).where(Invitation.id == inv_id)))
     if inv is None or company is None or inv.company_id != company.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
@@ -326,9 +337,14 @@ async def respond_invitation(
     меняются, отозванный доступ не восстанавливается.
     """
     profile = await _own_profile(db, account)
-    inv = await db.scalar(
-        select(Invitation).where(Invitation.id == inv_id).with_for_update()
-    )
+    # Блокируем строку по id (FOR UPDATE на joined-связи запрещён в Postgres),
+    # затем загружаем приглашение в этой же транзакции — конкурирующие запросы
+    # к той же строке ждут фиксации первой (атомарный respond).
+    locked = await db.scalar(select(Invitation.id).where(Invitation.id == inv_id).with_for_update())
+    if locked is None:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Приглашение не найдено", recovery="none")
+    inv = await db.get(Invitation, inv_id)
     if inv is None or inv.candidate_id != profile.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
@@ -371,9 +387,11 @@ async def revoke_contacts(
     «успеха» и не рассинхронизируют уникальный индекс открытых приглашений.
     """
     profile = await _own_profile(db, account)
-    inv = await db.scalar(
-        select(Invitation).where(Invitation.id == inv_id).with_for_update()
-    )
+    locked = await db.scalar(select(Invitation.id).where(Invitation.id == inv_id).with_for_update())
+    if locked is None:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Приглашение не найдено", recovery="none")
+    inv = await db.get(Invitation, inv_id)
     if inv is None or inv.candidate_id != profile.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
