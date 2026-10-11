@@ -29,8 +29,84 @@ export function AssessmentPage() {
 
   const answersRef = useRef<Record<string, string>>({});
   answersRef.current = answers;
+  const attemptRef = useRef<AttemptState | null>(null);
+  attemptRef.current = attempt;
   // Версия ответов на сервере (NFR-06): устаревший запрос не затирает свежий выбор
   const versionRef = useRef<number>(0);
+  // Очередь автосохранений: одно сохранение в полёте, новые изменения
+  // схлопываются в pendingSaveRef и отправляются следующим запросом.
+  const pendingSaveRef = useRef<Record<string, string> | null>(null);
+  const savePromiseRef = useRef<Promise<boolean> | null>(null);
+
+  function isConflict(err: unknown): boolean {
+    return err instanceof ApiError && (err.status === 409 || err.problem?.code === "CONFLICT");
+  }
+
+  async function runSaveLoop(): Promise<boolean> {
+    const attemptId = attemptRef.current?.attempt_id;
+    if (!attemptId) return true;
+    while (pendingSaveRef.current) {
+      const toSave = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      try {
+        const st = await candidateApi.saveAttemptAnswers(
+          attemptId,
+          Object.entries(toSave).map(([q, o]) => ({ question_id: q, option_id: o })),
+          versionRef.current,
+        );
+        versionRef.current = st.answers_version;
+        setSaveError(null);
+      } catch (err) {
+        if (isConflict(err)) {
+          // Сервер новее: перечитываем состояние и накладываем локальный выбор
+          // поверх серверного — свежий выбор пользователя не теряется (NFR-06).
+          try {
+            const st = await candidateApi.getAttempt(attemptId);
+            versionRef.current = st.answers_version;
+            const server = Object.fromEntries(st.answers.map((a) => [a.question_id, a.option_id]));
+            const merged = { ...server, ...toSave };
+            setAnswers(merged);
+            answersRef.current = merged;
+            pendingSaveRef.current = merged;
+            setSaveError("Ответы изменились в другом окне — локальный выбор сохранён поверх.");
+          } catch {
+            setSaveError("Не удалось обновить состояние попытки. Проверьте соединение.");
+            return false;
+          }
+        } else {
+          setSaveError(
+            err instanceof ApiError
+              ? `Автосохранение не удалось: ${err.message}`
+              : "Автосохранение не удалось. Проверьте соединение.",
+          );
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function scheduleSave() {
+    if (!attemptRef.current) return;
+    pendingSaveRef.current = { ...answersRef.current };
+    if (!savePromiseRef.current) {
+      savePromiseRef.current = runSaveLoop().finally(() => {
+        savePromiseRef.current = null;
+      });
+    }
+  }
+
+  /** Дождаться завершения всех автосохранений; false — если сохранить не удалось. */
+  async function flushSaves(): Promise<boolean> {
+    if (savePromiseRef.current) {
+      const ok = await savePromiseRef.current;
+      if (!ok) return false;
+    }
+    if (pendingSaveRef.current) {
+      return runSaveLoop();
+    }
+    return true;
+  }
 
   const load = useCallback(() => {
     candidateApi
@@ -99,56 +175,29 @@ export function AssessmentPage() {
   function pickAnswer(questionId: string, optionId: string) {
     const next = { ...answersRef.current, [questionId]: optionId };
     setAnswers(next);
+    answersRef.current = next;
     setSaveError(null);
-    if (!attempt) return;
+    if (!attemptRef.current) return;
     // Автосохранение на сервере по мере выбора (перезагрузка не теряет ответы).
-    // Ошибки не игнорируются: устаревшая версия (409) — состояние перечитывается,
-    // остальные сбои показываются, чтобы пользователь не потерял ответы молча.
-    candidateApi
-      .saveAttemptAnswers(
-        attempt.attempt_id,
-        Object.entries(next).map(([q, o]) => ({ question_id: q, option_id: o })),
-        versionRef.current,
-      )
-      .then((st) => {
-        versionRef.current = st.answers_version;
-      })
-      .catch((err) => {
-        const problem = err instanceof ApiError ? err.problem : null;
-        if (err instanceof ApiError && (err.status === 409 || problem?.code === "CONFLICT")) {
-          setSaveError("Ответы изменились в другом окне — состояние обновлено.");
-          candidateApi
-            .getAttempt(attempt.attempt_id)
-            .then((st) => {
-              setAttempt(st);
-              versionRef.current = st.answers_version;
-              setAnswers(Object.fromEntries(st.answers.map((a) => [a.question_id, a.option_id])));
-            })
-            .catch(() => undefined);
-        } else {
-          setSaveError(
-            err instanceof ApiError
-              ? `Автосохранение не удалось: ${err.message}`
-              : "Автосохранение не удалось. Проверьте соединение.",
-          );
-        }
-      });
+    // Сохранения сериализуются очередью: запоздалый ответ не затирает свежий
+    // выбор, а при 409 локальные ответы накладываются поверх серверных.
+    scheduleSave();
   }
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!attempt) return;
+    if (!attemptRef.current) return;
     setSubmitting(true);
     setError(null);
     try {
-      // Сначала сохраняем последние ответы, затем отправляем (безопасный повтор)
-      const saved = await candidateApi.saveAttemptAnswers(
-        attempt.attempt_id,
-        Object.entries(answersRef.current).map(([q, o]) => ({ question_id: q, option_id: o })),
-        versionRef.current,
-      );
-      versionRef.current = saved.answers_version;
-      const res = await candidateApi.submitAttempt(attempt.attempt_id);
+      // Перед отправкой дожидаемся завершения всех автосохранений (NFR-06):
+      // submit не уходит раньше, чем сервер подтвердил последний выбор.
+      const saved = await flushSaves();
+      if (!saved) {
+        setError("Не удалось сохранить ответы. Проверьте соединение и повторите отправку.");
+        return;
+      }
+      const res = await candidateApi.submitAttempt(attemptRef.current.attempt_id);
       setResult(res);
       setAttempt(null);
       setSummary(await candidateApi.getAssessment());

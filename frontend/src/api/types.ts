@@ -32,6 +32,7 @@ export interface ConsentDoc {
 
 export interface CandidateProfile {
   full_name: string;
+  public_name: string | null;
   phone: string | null;
   contact_email: string;
   experience_months: number;
@@ -50,6 +51,7 @@ export interface CandidateProfile {
 
 export interface CandidateProfileIn {
   full_name: string;
+  public_name: string | null;
   phone: string | null;
   experience_months: number;
   role_ids: string[];

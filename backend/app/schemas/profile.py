@@ -16,8 +16,19 @@ def _validate_experience(v: int) -> int:
     return v
 
 
+def default_public_name(full_name: str) -> str:
+    """«Имя Ф.» из ФИО — публичное имя по умолчанию (FR-27)."""
+    parts = [p for p in full_name.split() if p]
+    if not parts:
+        return full_name
+    if len(parts) == 1:
+        return parts[0]
+    return f"{parts[0]} {parts[1][0]}."
+
+
 class CandidateProfileIn(BaseModel):
     full_name: str
+    public_name: str | None = Field(default=None, max_length=150)
     phone: str | None = Field(default=None, max_length=32)
     experience_months: int = Field(default=0, ge=0, le=720)
     role_ids: list[uuid.UUID] = Field(min_length=1)
@@ -53,6 +64,7 @@ class CandidateProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     full_name: str
+    public_name: str | None = None
     phone: str | None
     contact_email: str
     experience_months: int

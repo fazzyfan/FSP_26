@@ -111,12 +111,13 @@ async def setup_data() -> dict:
                 cat.source_attempt_id = attempt.id
             return email
 
-        # блоки подтверждающей попытки: A — все блоки идеальны (60 баллов),
-        # B — в среднем 2/3 блока (40 баллов), FSP у C не даёт баллов без реестра
+        # блоки подтверждающей попытки (UPD 4, п.4): 60% считаются по блокам,
+        # проверяющим навыки вакансии (python/fastapi/sql -> блок 1).
+        # A — блок 1 идеален (60 баллов), B — блок 1 на 50% (30 баллов).
         refs["A"] = await make_candidate("a", "python_backend", "junior", ["python", "fastapi", "sql"], 100,
                                          blocks=(2, 2, 2))
         refs["B"] = await make_candidate("b", "python_backend", "junior", ["python", "fastapi"], 70,
-                                         blocks=(2, 1, 1))
+                                         blocks=(1, 2, 2))
         refs["C"] = await make_candidate("c", "python_backend", "middle", ["python", "fastapi", "sql"], 100,
                                          fsp=True, blocks=(2, 2, 2))
         refs["D"] = await make_candidate("d", "system_analysis", "junior", ["requirements"], 100,
@@ -167,23 +168,27 @@ async def main() -> int:
         page = r.json()
         items = page["items"]
         names = [i["full_name"] for i in items]
+        # Демо-кандидат с подтверждённой категорией тоже может попасть в выдачу —
+        # проверяем именно контрольных кандидатов A-D.
         check("исключены неподходящие специализация и грейд",
-              page["total"] == 2 and "Кандидат D" not in names and "Кандидат C" not in names,
+              "Кандидат D" not in names and "Кандидат C" not in names
+              and "Кандидат A" in names and "Кандидат B" in names,
               f"total={page['total']}")
 
         by_name = {i["full_name"]: i for i in items}
         a = by_name.get("Кандидат A")
         b = by_name.get("Кандидат B")
-        check("кандидат A: 60(блоки 100%) + 30(тест 100%) + 0 = 90",
+        check("кандидат A: 60(блок 1: 100%) + 30(тест 100%) + 0 = 90",
               a is not None and a["score"] == 90
               and a["score_breakdown"] == {"competencies": 60.0, "test": 30.0, "fsp": 0.0},
               f"score={a and a['score']}")
-        check("кандидат B: 40(блоки 2/3) + 21(тест 70%) + 0 = 61",
-              b is not None and b["score"] == 61
-              and b["score_breakdown"] == {"competencies": 40.0, "test": 21.0, "fsp": 0.0},
+        check("кандидат B: 30(блок 1: 50%) + 21(тест 70%) + 0 = 51",
+              b is not None and b["score"] == 51
+              and b["score_breakdown"] == {"competencies": 30.0, "test": 21.0, "fsp": 0.0},
               f"score={b and b['score']}")
-        check("сортировка по баллу", items[0]["full_name"] == "Кандидат A",
-              items[0]["full_name"] if items else "-")
+        check("сортировка по баллу", a is not None and b is not None
+              and items.index(a) < items.index(b),
+              f"позиции A={items.index(a) if a else '-'}, B={items.index(b) if b else '-'}")
         check("объяснения включают компетенции, тест и ФСП",
               all(any("Компетенции" in rr for rr in i["reasons"])
                   and any("Результат теста" in rr for rr in i["reasons"])
@@ -193,18 +198,20 @@ async def main() -> int:
         r = await emp.get(f"{url}?grade=middle")
         check("фильтр grade=middle — пусто", r.json()["total"] == 0, str(r.json()["total"]))
         r = await emp.get(f"{url}?min_score=70")
-        check("фильтр min_score=70 — только A", r.json()["total"] == 1
-              and r.json()["items"][0]["full_name"] == "Кандидат A", str(r.json()["total"]))
-        r = await emp.get(f"{url}?grade=junior&min_score=61")
-        check("фильтры вместе — A и B", r.json()["total"] == 2, str(r.json()["total"]))
+        names70 = [i["full_name"] for i in r.json()["items"]]
+        check("фильтр min_score=70 — A есть, B (51) отсечён",
+              "Кандидат A" in names70 and "Кандидат B" not in names70, str(names70))
+        r = await emp.get(f"{url}?grade=junior&min_score=50")
+        names50 = [i["full_name"] for i in r.json()["items"]]
+        check("фильтры вместе — A и B", "Кандидат A" in names50 and "Кандидат B" in names50, str(names50))
 
         # --- пагинация ---
         r = await emp.get(f"{url}?page=1&page_size=1")
         p1 = r.json()
         r = await emp.get(f"{url}?page=2&page_size=1")
         p2 = r.json()
-        check("пагинация page_size=1: 2 страницы",
-              p1["pages"] == 2 and p1["total"] == 2 and len(p1["items"]) == 1 and len(p2["items"]) == 1
+        check("пагинация page_size=1: страницы не пустые, A и B на разных",
+              p1["pages"] >= 2 and len(p1["items"]) == 1 and len(p2["items"]) == 1
               and p1["items"][0]["candidate_id"] != p2["items"][0]["candidate_id"],
               f"pages={p1['pages']}, page2_len={len(p2['items'])}")
         r = await emp.get(f"{url}?page=99&page_size=10")

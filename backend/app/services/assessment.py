@@ -35,7 +35,7 @@ BLOCKS = (1, 2, 3)
 async def questions_for_category(
     db: AsyncSession, specialization_id: uuid.UUID, grade_level: int
 ) -> list[TestQuestion]:
-    """Вопросы теста выбранной категории: 6 заданий (3 блока по 2)."""
+    """Все активные вопросы категории (банк; старт выбирает набор из них)."""
     return list(
         (
             await db.scalars(
@@ -49,6 +49,30 @@ async def questions_for_category(
             )
         ).all()
     )
+
+
+def pick_questions_for_attempt(questions: list[TestQuestion]) -> list[TestQuestion]:
+    """Случайный набор 6 заданий (2 на блок) из банка категории (UPD 4, п.6).
+
+    Перемешивание вариантов ответа не даёт разнообразия теста — набор заданий
+    выбирается случайно на каждый старт и фиксируется в снимке попытки.
+    """
+    import random
+
+    by_block: dict[int, list[TestQuestion]] = {b: [] for b in BLOCKS}
+    for q in questions:
+        by_block.setdefault(q.block, []).append(q)
+    picked: list[TestQuestion] = []
+    for b in BLOCKS:
+        pool = by_block.get(b, [])
+        if len(pool) < 2:
+            raise errors.Problem(
+                409, errors.INVALID_STATE, errors.E12_STATE, "Тест по этой категории не готов",
+                detail="Нужно минимум 2 задания в каждом блоке. Обратитесь к администратору.",
+                recovery="retry",
+            )
+        picked.extend(random.sample(pool, 2))
+    return picked
 
 
 def build_questions_snapshot(questions: list[TestQuestion]) -> list[dict]:
@@ -254,14 +278,31 @@ async def save_answers(
     attempt: TestAttempt,
     answers: list[tuple[uuid.UUID, uuid.UUID]],
     valid_question_ids: set[uuid.UUID],
+    valid_options: dict[uuid.UUID, set[uuid.UUID]] | None = None,
     expected_version: int | None = None,
 ) -> None:
     """Upsert ответов активной попытки. Завершённые/просроченные попытки закрыты.
 
-    Версия ответов (NFR-06): клиент передаёт answers_version, с которой он
-    работал. Если на сервере уже новее — запрос отклоняется (409), чтобы
-    запоздавшее автосохранение не затерло свежий выбор.
+    Атомарность (NFR-06): строка попытки блокируется (FOR UPDATE), проверка
+    версии и инкремент выполняются в одной транзакции. Параллельные
+    автосохранения сериализуются: запоздалый запрос с устаревшей версией
+    получает 409 и не затирает свежий выбор. Вариант ответа обязан
+    принадлежать вопросу (проверка по снимку попытки, FR-09).
     """
+    from sqlalchemy.exc import IntegrityError
+
+    # Атомарная блокировка строки: конкурирующие сохранения ждут фиксации первого
+    locked_id = await db.scalar(
+        select(TestAttempt.id).where(TestAttempt.id == attempt.id).with_for_update()
+    )
+    if locked_id is None:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Попытка не найдена", recovery="none")
+    attempt = await db.get(TestAttempt, attempt.id)
+    # identity map может вернуть объект из API-слоя: перечитываем ответы в
+    # текущей транзакции, чтобы не вставить дубль (uq_attempt_answer_question)
+    await db.refresh(attempt, attribute_names=["answers"])
+
     if attempt.status != TestAttemptStatus.IN_PROGRESS:
         raise errors.Problem(
             409, errors.INVALID_STATE, errors.E12_STATE, "Попытка уже завершена",
@@ -285,23 +326,29 @@ async def save_answers(
             recovery="refresh", extra={"current_version": attempt.answers_version},
         )
 
-    # Параллельные автосохранения одной попытки (двойной клик, ретраи клиента)
-    # могут столкнуться на unique (attempt_id, question_id) — один ретрай
-    # после отката решает гонку, дубликаты не создаются.
-    from sqlalchemy.exc import IntegrityError
+    # Валидация выполняется до записи; гонка на unique (attempt_id, question_id)
+    # решается ретраем после отката (строка попытки заблокирована, дублей нет).
+    for qid, opt_id in answers:
+        if qid not in valid_question_ids:
+            raise errors.Problem(
+                422, errors.VALIDATION_FAILED, errors.E04_REFERENCE, "Неизвестный вопрос",
+                errors=[{"field": "answers", "code": "REFERENCE_INVALID", "error_class": "E04",
+                         "message": "Вопрос не входит в тест этой категории"}],
+                recovery="correct_input",
+            )
+        if valid_options is not None and opt_id not in valid_options.get(qid, set()):
+            raise errors.Problem(
+                422, errors.VALIDATION_FAILED, errors.E04_REFERENCE, "Вариант не принадлежит вопросу",
+                errors=[{"field": "answers", "code": "OPTION_INVALID", "error_class": "E04",
+                         "message": "Выбранный вариант не относится к этому вопросу"}],
+                recovery="correct_input",
+            )
 
     last_error: IntegrityError | None = None
     for _retry in range(2):
         existing = await attempt_answers_map(db, attempt)
         try:
             for qid, opt_id in answers:
-                if qid not in valid_question_ids:
-                    raise errors.Problem(
-                        422, errors.VALIDATION_FAILED, errors.E04_REFERENCE, "Неизвестный вопрос",
-                        errors=[{"field": "answers", "code": "REFERENCE_INVALID", "error_class": "E04",
-                                 "message": "Вопрос не входит в тест этой категории"}],
-                        recovery="correct_input",
-                    )
                 answer = existing.get(qid)
                 if answer is None:
                     answer = TestAttemptAnswer(attempt_id=attempt.id, question_id=qid, option_id=opt_id)

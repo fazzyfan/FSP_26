@@ -60,7 +60,7 @@ async def create_candidate() -> tuple[str, str]:
             account_id=acc.id, full_name="Кандидат этапа 4", phone="+7 900 111-22-33",
             experience_months=12, claimed_level_id=None, soft_skills=[],
             about="Проверка PDF, согласий и ФСП.", is_published=True,
-            show_fsp=True, fsp_member_id="FSP-DEMO-42",
+            show_fsp=True, fsp_member_id="FSP-2026-0001",
         )
         session.add(profile)
         await session.flush()

@@ -22,6 +22,9 @@ class CandidateProfile(Base):
     )
     # ФИО: единое поле 2-150 символов (каталог ошибок E02 NAME_FORMAT)
     full_name: Mapped[str] = mapped_column(String(150), nullable=False)
+    # Публичное имя для работодателей до согласия на контакты (FR-27):
+    # по умолчанию «Имя Ф.» из ФИО, кандидат может задать своё.
+    public_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Контактный email = подтверждённый email аккаунта (FR-05)
     experience_months: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 0..720

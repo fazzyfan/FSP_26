@@ -280,7 +280,9 @@ async def start_test(
         raise errors.Problem(422, errors.VALIDATION_FAILED, errors.E02_FORMAT,
                              "Некорректный грейд", recovery="correct_input")
 
-    questions = await assessment_service.questions_for_category(db, specialization_id, grade_level)
+    bank = await assessment_service.questions_for_category(db, specialization_id, grade_level)
+    # Случайный набор 6 заданий (2 на блок) из банка; снимок фиксирует выбор (UPD 4, п.6)
+    questions = assessment_service.pick_questions_for_attempt(bank)
     if len(questions) != 6:
         raise errors.Problem(
             409, errors.INVALID_STATE, errors.E12_STATE, "Тест по этой категории не готов",
@@ -319,10 +321,16 @@ async def save_attempt_answers(
     запрос с устаревшей версией ответов — 409 (NFR-06)."""
     attempt = await _own_attempt(db, account, attempt_id)
     if attempt.questions_snapshot:
+        # Проверка по снимку попытки: банк мог измениться после старта (FR-09)
         valid_ids = {uuid.UUID(q["id"]) for q in attempt.questions_snapshot}
+        valid_options = {
+            uuid.UUID(q["id"]): {uuid.UUID(o["id"]) for o in q["options"]}
+            for q in attempt.questions_snapshot
+        }
     else:
         questions = await assessment_service.questions_for_category(db, attempt.specialization_id, attempt.grade_level)
         valid_ids = {q.id for q in questions}
+        valid_options = {q.id: {o.id for o in q.options} for q in questions}
 
     # Дубли в одном запросе не допускаются
     seen: set[uuid.UUID] = set()
@@ -337,7 +345,9 @@ async def save_attempt_answers(
         seen.add(a.question_id)
         pairs.append((a.question_id, a.option_id))
 
-    await assessment_service.save_answers(db, attempt, pairs, valid_ids, expected_version=payload.version)
+    await assessment_service.save_answers(
+        db, attempt, pairs, valid_ids, valid_options=valid_options, expected_version=payload.version
+    )
     await db.refresh(attempt)
     return await _attempt_state(db, attempt)
 
@@ -357,6 +367,11 @@ async def submit_attempt(
     Повторный submit завершённой попытки (после потери связи) не возвращает 409,
     а восстанавливает сохранённый результат: клиент получает тот же ответ, что
     при первой отправке. Просроченная попытка остаётся закрытой.
+
+    Атомарность: строка блокируется (FOR UPDATE), чтобы параллельное
+    автосохранение не изменило ответы между проверкой полноты и подсчётом.
+    Полнота проверяется по снимку попытки, а не по текущему банку (FR-09):
+    изменение банка после старта не мешает завершению и не меняет оценку.
     """
     settings = get_settings()
     attempt = await _own_attempt(db, account, attempt_id)
@@ -371,13 +386,24 @@ async def submit_attempt(
             detail="Повторная отправка результата запрещена.", recovery="none",
         )
 
-    questions = await assessment_service.questions_for_category(db, attempt.specialization_id, attempt.grade_level)
-    if not questions:
-        raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
-                             "Тест по этой категории не готов", recovery="retry")
+    # Блокируем строку: submit и автосохранение одной попытки сериализуются
+    locked = await db.scalar(select(TestAttempt.id).where(TestAttempt.id == attempt_id).with_for_update())
+    if locked is None:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Попытка не найдена", recovery="none")
+    attempt = await db.get(TestAttempt, attempt_id)
+
+    if attempt.questions_snapshot:
+        required_ids = {uuid.UUID(q["id"]) for q in attempt.questions_snapshot}
+    else:
+        questions = await assessment_service.questions_for_category(db, attempt.specialization_id, attempt.grade_level)
+        if not questions:
+            raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
+                                 "Тест по этой категории не готов", recovery="retry")
+        required_ids = {q.id for q in questions}
 
     answered = {a.question_id for a in attempt.answers}
-    missing = {q.id for q in questions} - answered
+    missing = required_ids - answered
     if missing:
         raise errors.Problem(
             422, errors.VALIDATION_FAILED, errors.E01_REQUIRED, "Не все вопросы отвечены",

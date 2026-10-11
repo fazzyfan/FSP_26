@@ -32,6 +32,23 @@ COMPETENCY_WEIGHT = 60
 TEST_WEIGHT = 30
 FSP_WEIGHT = 10
 
+BLOCKS = (1, 2, 3)
+
+# Явная связь «компетенция (навык) потребности → блок теста» (UPD 4, п.4):
+# 60% подбора считаются по блокам, которые проверяют нужные вакансии навыки,
+# а не по среднему всех блоков (которое дублировало общий результат теста).
+SKILL_BLOCK_MAP: dict[str, int] = {
+    "python": 1, "fastapi": 1, "sql": 1, "postgresql": 1, "sqlalchemy": 1,
+    "rest_api": 2, "http": 2, "git": 2, "docker": 2, "testing": 2,
+    "requirements": 3, "uml": 3, "data_modeling": 3, "integration": 3, "analytics": 3,
+}
+
+
+def _blocks_for_need(need: EmployerNeed) -> set[int]:
+    """Блоки теста, проверяющие навыки потребности; без навыков — все блоки."""
+    blocks = {SKILL_BLOCK_MAP[s.code] for s in need.skills if s.code in SKILL_BLOCK_MAP}
+    return blocks or set(BLOCKS)
+
 
 @dataclass
 class MatchCandidate:
@@ -47,14 +64,15 @@ class MatchCandidate:
     reasons: list[str] = field(default_factory=list)
 
 
-def _block_success_rate(attempt: TestAttempt) -> float:
-    """Средняя успешность блоков подтверждающей попытки (60%, FR-19)."""
-    totals = [attempt.total_count // 3] * 3 if attempt.total_count else [2, 2, 2]
-    corrects = [attempt.block1_correct, attempt.block2_correct, attempt.block3_correct]
+def _block_success_rate(attempt: TestAttempt, blocks: set[int] | None = None) -> float:
+    """Средняя успешность выбранных блоков подтверждающей попытки (60%, FR-19)."""
+    blocks = blocks or set(BLOCKS)
+    total_per_block = attempt.total_count // 3 if attempt.total_count else 2
+    corrects = {1: attempt.block1_correct, 2: attempt.block2_correct, 3: attempt.block3_correct}
     ratios = []
-    for total, correct in zip(totals, corrects):
-        if total > 0:
-            ratios.append(correct / total)
+    for b in BLOCKS:
+        if b in blocks and total_per_block > 0:
+            ratios.append(corrects[b] / total_per_block)
     return sum(ratios) / len(ratios) if ratios else 0.0
 
 
@@ -131,16 +149,26 @@ async def match_candidates_for_need(
         if grade_ok:
             reasons.append(f"Грейд «{category.grade.name}» в допустимом диапазоне потребности")
 
-        # --- 60%: компетенции (подтверждённые блоки попытки, а не self-reported навыки) ---
+        # --- 60%: компетенции, нужные вакансии (навыки потребности → блоки теста) ---
         attempt = confirming.get(category.source_attempt_id) if category.source_attempt_id else None
         if attempt is not None:
-            block_rate = _block_success_rate(attempt)
+            relevant_blocks = _blocks_for_need(need)
+            block_rate = _block_success_rate(attempt, relevant_blocks)
             competency_points = round(COMPETENCY_WEIGHT * block_rate, 1)
-            reasons.append(
-                f"Компетенции: подтверждённые блоки {attempt.score_percent}%, "
-                f"успешность блоков {int(block_rate * 100)}% "
-                f"({competency_points} из {COMPETENCY_WEIGHT} баллов)"
-            )
+            if relevant_blocks == set(BLOCKS):
+                reasons.append(
+                    f"Компетенции: навыки вакансии не заданы — учтены все блоки, "
+                    f"успешность {int(block_rate * 100)}% "
+                    f"({competency_points} из {COMPETENCY_WEIGHT} баллов)"
+                )
+            else:
+                skills_text = ", ".join(s.name for s in need.skills)
+                reasons.append(
+                    f"Компетенции вакансии ({skills_text}) → блоки "
+                    f"{', '.join(str(b) for b in sorted(relevant_blocks))}: "
+                    f"успешность {int(block_rate * 100)}% "
+                    f"({competency_points} из {COMPETENCY_WEIGHT} баллов)"
+                )
         else:
             competency_points = 0.0
             reasons.append("Компетенции не учитываются (нет подтверждающей попытки)")
@@ -174,7 +202,8 @@ async def match_candidates_for_need(
         results.append(
             MatchCandidate(
                 candidate_id=profile.id,
-                full_name=profile.full_name,
+                # До согласия на контакты работодатель видит публичное имя (FR-27)
+                full_name=profile.public_name or profile.full_name,
                 specialization_name=category.specialization.name,
                 grade_code=category.grade.code,
                 grade_name=category.grade.name,

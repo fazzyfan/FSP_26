@@ -46,11 +46,16 @@ def upgrade() -> None:
         WHERE status = 'in_progress' AND expires_at < now()
         """
     )
+    # Дубли активных попыток закрываются по явному правилу (expired), а не
+    # удаляются: ответы и история сохраняются (UPD 4, п.7).
     op.execute(
         """
-        DELETE FROM test_attempts a USING test_attempts b
-        WHERE a.id > b.id AND a.candidate_id = b.candidate_id
-          AND a.status = 'in_progress' AND b.status = 'in_progress'
+        UPDATE test_attempts a SET status = 'expired',
+               submitted_at = COALESCE(a.expires_at, a.started_at + INTERVAL '20 minutes')
+        FROM test_attempts b
+        WHERE a.candidate_id = b.candidate_id AND a.status = 'in_progress'
+          AND b.status = 'in_progress'
+          AND (a.started_at < b.started_at OR (a.started_at = b.started_at AND a.id < b.id))
         """
     )
     op.create_index('uq_test_attempts_active_candidate', 'test_attempts', ['candidate_id'],

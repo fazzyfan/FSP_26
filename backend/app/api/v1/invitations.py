@@ -52,12 +52,17 @@ def _inv_with_account(stmt):
 
 
 def _employer_out(inv: Invitation, profile: CandidateProfile | None = None) -> EmployerInvitationOut:
-    # После отзыва обработки данных (деактивация) ФИО кандидата не выдаётся
+    # После отзыва обработки данных (деактивация) имя кандидата не выдаётся.
+    # До согласия на контакты (accept) показывается согласованное публичное
+    # имя, полное ФИО — только после явного согласия (FR-27).
     prof = profile if profile is not None else inv.candidate
     account = getattr(prof, "account", None) if prof is not None else None
     visible_name = ""
     if prof is not None and account is not None and account.status.value == "active":
-        visible_name = prof.full_name
+        if inv.status == InvitationStatus.ACCEPTED and inv.contacts_consented_at is not None:
+            visible_name = prof.full_name
+        else:
+            visible_name = prof.public_name or prof.full_name
     return EmployerInvitationOut(
         id=str(inv.id),
         need_id=str(inv.need_id),
@@ -164,8 +169,12 @@ async def create_invitation(
     # Одно открытое приглашение от компании кандидату (FR-23, NFR-06)
     existing = await _open_invitation(db, company.id, candidate.id)
     if existing is not None:
+        # Повтор предложения считается тем же только при совпадении потребности
+        # (need_id) и условий: повтор после потери связи возвращает существующее,
+        # а предложение под другую потребность — 409.
         same_terms = (
-            existing.salary_from == payload.salary_from
+            existing.need_id == need.id
+            and existing.salary_from == payload.salary_from
             and existing.salary_to == payload.salary_to
             and existing.message == payload.message
         )
@@ -199,8 +208,15 @@ async def create_invitation(
         if existing is None:
             raise errors.Problem(409, errors.CONFLICT, errors.E11_CONCURRENCY,
                                  "Не удалось создать приглашение, повторите запрос", recovery="retry")
+        # После rollback объекты сессии истекли: перечитываем в свежей
+        # транзакции с eager-load, чтобы ответ не тянул ленивые загрузки
+        # под нагрузкой (пул соединений).
+        existing = await db.scalar(
+            _inv_with_account(select(Invitation).where(Invitation.id == existing.id))
+        )
         same_terms = (
-            existing.salary_from == payload.salary_from
+            existing.need_id == need.id
+            and existing.salary_from == payload.salary_from
             and existing.salary_to == payload.salary_to
             and existing.message == payload.message
         )
@@ -228,9 +244,18 @@ async def withdraw_invitation(
     account: Account = EmployerDep,
     db: AsyncSession = Depends(get_db),
 ) -> EmployerInvitationOut:
+    """Отзыв ожидающего приглашения. Атомарность: строка блокируется (FOR UPDATE),
+    одновременные отзыв и принятие сериализуются — проигравший получает 409."""
     company = await _own_company(db, account)
+    if company is None:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Приглашение не найдено", recovery="none")
+    locked = await db.scalar(select(Invitation.id).where(Invitation.id == inv_id).with_for_update())
+    if locked is None:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Приглашение не найдено", recovery="none")
     inv = await db.scalar(_inv_with_account(select(Invitation).where(Invitation.id == inv_id)))
-    if inv is None or company is None or inv.company_id != company.id:
+    if inv is None or inv.company_id != company.id:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Приглашение не найдено", recovery="none")
     if inv.status != InvitationStatus.PENDING:

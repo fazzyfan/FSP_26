@@ -14,7 +14,7 @@ from app.db.base import get_db
 from app.models.account import Account, Role
 from app.models.candidate import CandidateProfile
 from app.models.reference import Grade, RoleRef, Skill
-from app.schemas.profile import CandidateProfileIn, CandidateProfileOut
+from app.schemas.profile import CandidateProfileIn, CandidateProfileOut, default_public_name
 
 router = APIRouter(prefix="/candidate", tags=["candidate"])
 
@@ -24,6 +24,7 @@ CandidateDep = Depends(require_roles(Role.CANDIDATE))
 def _to_out(profile: CandidateProfile, account: Account) -> CandidateProfileOut:
     return CandidateProfileOut(
         full_name=profile.full_name,
+        public_name=profile.public_name,
         phone=profile.phone,
         contact_email=account.email,
         experience_months=profile.experience_months,
@@ -97,6 +98,8 @@ async def upsert_profile(
                              detail="Обновите страницу и повторите сохранение.", recovery="refresh")
 
     profile.full_name = payload.full_name
+    # Публичное имя: явное значение или производное от ФИО (FR-27)
+    profile.public_name = (payload.public_name or "").strip() or default_public_name(payload.full_name)
     profile.phone = payload.phone
     profile.experience_months = payload.experience_months
     profile.claimed_level_id = payload.claimed_level_id

@@ -119,9 +119,9 @@ async def main() -> int:
         tests = {t["specialization_name"]: t for t in summary["tests"]}
         py = tests.get("Python backend")
         sa = tests.get("Системный анализ")
-        check("4 категории (2 спец × 2 грейда)",
+        check("4 категории (2 спец × 2 грейда), банк ≥ 6 заданий",
               py and sa and {g["grade_code"] for g in py["grades"]} == {"junior", "middle"}
-              and all(g["questions_count"] == 6 for t in (py, sa) for g in t["grades"]),
+              and all(g["questions_count"] >= 6 for t in (py, sa) for g in t["grades"]),
               str({k: len(v["grades"]) for k, v in tests.items()}))
 
         # --- Старт попытки (junior / python) ---

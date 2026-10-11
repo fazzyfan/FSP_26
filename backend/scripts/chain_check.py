@@ -84,8 +84,8 @@ async def main() -> int:
         summary = r.json()
         tests = {t["specialization_name"]: t for t in summary["tests"]}
         spec = tests.get("Python backend")
-        check("тест Python backend: 12 заданий, 2 грейда",
-              spec is not None and spec["questions_count"] == 12 and len(spec["grades"]) == 2,
+        check("тест Python backend: 18 заданий в банке, 2 грейда",
+              spec is not None and spec["questions_count"] == 18 and len(spec["grades"]) == 2,
               str(spec) if spec else "нет")
         if spec is None:
             print("\nПровалено: нет вопросов по специализации Python backend")

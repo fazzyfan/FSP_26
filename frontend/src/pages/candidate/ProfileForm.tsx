@@ -4,6 +4,7 @@ import type { CandidateProfile, ReferenceItem } from "../../api/types";
 
 interface Draft {
   full_name: string;
+  public_name: string;
   phone: string;
   experience_months: number;
   role_ids: string[];
@@ -19,6 +20,7 @@ interface Draft {
 
 const empty: Draft = {
   full_name: "",
+  public_name: "",
   phone: "",
   experience_months: 0,
   role_ids: [],
@@ -35,6 +37,7 @@ const empty: Draft = {
 function toDraft(p: CandidateProfile): Draft {
   return {
     full_name: p.full_name,
+    public_name: p.public_name ?? "",
     phone: p.phone ?? "",
     experience_months: p.experience_months,
     role_ids: [],
@@ -96,6 +99,7 @@ export function ProfileForm() {
     try {
       const saved = await candidateApi.saveProfile({
         full_name: draft.full_name,
+        public_name: draft.public_name || null,
         phone: draft.phone || null,
         experience_months: draft.experience_months,
         role_ids: draft.role_ids,
@@ -155,6 +159,11 @@ export function ProfileForm() {
       <label>
         ФИО <span className="muted">(2–150 символов)</span>
         <input value={draft.full_name} onChange={(e) => patch({ full_name: e.target.value })} required />
+      </label>
+
+      <label>
+        Публичное имя <span className="muted">(показывается работодателям до согласия на контакты)</span>
+        <input value={draft.public_name} onChange={(e) => patch({ public_name: e.target.value })} maxLength={150} />
       </label>
 
       <label>

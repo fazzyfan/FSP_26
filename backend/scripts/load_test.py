@@ -69,7 +69,7 @@ async def _force_attempt(spec_id: str, grade_code: str) -> str | None:
                 ).order_by(TestQuestion.block, TestQuestion.sort_order)
             )
         ).all()
-        if len(questions) != 6:
+        if len(questions) < 6:
             return None
         now = datetime.now(UTC)
         attempt = TestAttempt(
@@ -219,17 +219,48 @@ async def main() -> int:
                 else:
                     questions = []
             if attempt_id and questions:
-                # эталон не нужен: нагрузка проверяет путь записи, а не результат
-                pairs = [{"question_id": q["id"], "option_id": q["options"][0]["id"]} for q in questions]
+                # Конкурирующие ответы с версиями (UPD 4, п.1): каждый поток
+                # отправляет свой вариант с ожидаемой версией; устаревшие запросы
+                # получают 409 и повторяются с новой версией. Проверяем итоговые
+                # данные, а не только отсутствие 500.
                 sem4 = asyncio.Semaphore(10)
-                # version не передаём: параллельные потоки не должны конфликтовать
-                # на версии в нагрузочном сценарии (проверка версий — в acceptance)
-                await asyncio.gather(*[
-                    worker(c, "PUT", f"{api}/candidate/assessment/attempts/{attempt_id}/answers",
-                           sem4, lat_save, errors, headers=cand_headers,
-                           json_body={"answers": pairs},
-                           ok_codes={200}, label="save_answers") for _ in range(20)
-                ])
+                version = 0
+
+                async def save_competing(i: int) -> None:
+                    nonlocal version
+                    comp = [{"question_id": q["id"],
+                             "option_id": q["options"][i % len(q["options"])]["id"]} for q in questions]
+                    async with sem4:
+                        t0 = asyncio.get_running_loop().time()
+                        try:
+                            r = await c.put(
+                                f"{api}/candidate/assessment/attempts/{attempt_id}/answers",
+                                headers=cand_headers, json={"answers": comp, "version": version},
+                            )
+                            if r.status_code == 200:
+                                version = r.json()["answers_version"]
+                            elif r.status_code == 409:
+                                st = (await c.get(f"{api}/candidate/assessment/attempts/{attempt_id}",
+                                                  headers=cand_headers)).json()
+                                version = st["answers_version"]
+                                r = await c.put(
+                                    f"{api}/candidate/assessment/attempts/{attempt_id}/answers",
+                                    headers=cand_headers, json={"answers": comp, "version": version},
+                                )
+                            lat_save.append(asyncio.get_running_loop().time() - t0)
+                            if r.status_code not in (200, 409):
+                                errors.append(f"save_answers:{r.status_code}")
+                        except Exception as exc:  # noqa: BLE001
+                            errors.append(f"save_answers:{exc}")
+
+                await asyncio.gather(*[save_competing(i) for i in range(20)])
+                # Итоговые данные: версия выросла, на каждый вопрос ровно один ответ
+                st = (await c.get(f"{api}/candidate/assessment/attempts/{attempt_id}",
+                                  headers=cand_headers)).json()
+                if st.get("answers_version", 0) < 1:
+                    errors.append("answers:версия не выросла под нагрузкой")
+                if len(st.get("answers") or []) != len(questions):
+                    errors.append(f"answers:неполные ответы {len(st.get('answers') or [])}/{len(questions)}")
                 started = True
         if not started:
             errors.append("answers:не удалось начать попытку для нагрузки")
@@ -257,6 +288,14 @@ async def main() -> int:
                        # состояние от предыдущих прогонов) — не считается ошибкой пути
                        ok_codes={200, 201, 409}, label="invite") for i in range(20)
             ])
+            # Очистка созданных приглашений: открытые предложения не должны
+            # мешать повторным прогонам acceptance (verify_stage1).
+            from sqlalchemy import delete
+            from app.db.base import async_session_factory
+            from app.models.invitation import Invitation
+            async with async_session_factory() as s:
+                await s.execute(delete(Invitation).where(Invitation.message.like(f"Нагрузочный прогон {marker}%")))
+                await s.commit()
         else:
             # Данные зависят от того, прошёл ли демо-кандидат тест (это делает
             # chain_check/acceptance до нагрузочного прогона) — пропускаем секцию.

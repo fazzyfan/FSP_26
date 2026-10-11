@@ -29,7 +29,19 @@ class FSPProvider(abc.ABC):
 
 
 class DemoFSPProvider(FSPProvider):
-    """Демо-адаптер: детерминированные достижения для проверки механик (FR-15)."""
+    """Демо-адаптер: детерминированные достижения для проверки механик (FR-15).
+
+    Известные тестовые ID участников получают свои достижения; неизвестный ID
+    не подтверждается и не даёт бонуса в подборе (UPD 4, п.5). Реальная
+    интеграция заменяет этот класс без изменения вызывающего кода.
+    """
+
+    # Известные тестовые ID: каждый получает свой набор достижений
+    KNOWN_MEMBER_IDS: dict[str, list[str]] = {
+        "FSP-2026-0001": ["fsp_profile", "fsp_hackathon", "fsp_course"],
+        "FSP-2026-0002": ["fsp_profile", "fsp_course"],
+        "FSP-2026-0003": ["fsp_profile"],
+    }
 
     DEMO_ACHIEVEMENTS = [
         FSPAchievement(
@@ -55,8 +67,11 @@ class DemoFSPProvider(FSPProvider):
     async def get_achievements(self, member_id: str | None) -> list[FSPAchievement]:
         if not member_id or not member_id.strip():
             return []
-        # Номер участника в демо-режиме: любой непустой считается валидным
-        return self.DEMO_ACHIEVEMENTS
+        codes = self.KNOWN_MEMBER_IDS.get(member_id.strip())
+        if codes is None:
+            return []  # неизвестный ID: без подтверждения и бонуса
+        by_code = {a.code: a for a in self.DEMO_ACHIEVEMENTS}
+        return [by_code[c] for c in codes if c in by_code]
 
 
 def get_fsp_provider() -> FSPProvider:
