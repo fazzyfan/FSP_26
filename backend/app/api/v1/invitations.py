@@ -47,28 +47,51 @@ CandidateDep = Depends(require_roles(Role.CANDIDATE))
 # ---------------------------------------------------------------- employer ---
 
 def _inv_with_account(stmt):
-    """Eager-load кандидата и его аккаунта: проверка статуса без ленивых запросов."""
-    return stmt.options(selectinload(Invitation.candidate).selectinload(CandidateProfile.account))
+    """Eager-load кандидата, его аккаунта и навыков резюме: без ленивых запросов."""
+    return stmt.options(
+        selectinload(Invitation.candidate).selectinload(CandidateProfile.account),
+        selectinload(Invitation.candidate).selectinload(CandidateProfile.skills),
+    )
 
 
-def _employer_out(inv: Invitation, profile: CandidateProfile | None = None) -> EmployerInvitationOut:
+def _employer_out(
+    inv: Invitation,
+    profile: CandidateProfile | None = None,
+    category: ConfirmedCategory | None = None,
+) -> EmployerInvitationOut:
     # После отзыва обработки данных (деактивация) имя кандидата не выдаётся.
     # До согласия на контакты (accept) показывается согласованное публичное
     # имя, полное ФИО — только после явного согласия (FR-27).
     prof = profile if profile is not None else inv.candidate
     account = getattr(prof, "account", None) if prof is not None else None
     visible_name = ""
+    # Резюме (публичная часть, та же, что в подборе): категория, опыт, навыки, «о себе».
+    resume: dict = {
+        "specialization_name": None,
+        "grade_name": None,
+        "experience_months": 0,
+        "skills": [],
+        "about": None,
+    }
     if prof is not None and account is not None and account.status.value == "active":
         if inv.status == InvitationStatus.ACCEPTED and inv.contacts_consented_at is not None:
             visible_name = prof.full_name
         else:
             visible_name = prof.public_name or prof.full_name
+        resume = {
+            "specialization_name": category.specialization.name if category is not None else None,
+            "grade_name": category.grade.name if category is not None else None,
+            "experience_months": prof.experience_months,
+            "skills": [s.name for s in prof.skills],
+            "about": prof.about,
+        }
     return EmployerInvitationOut(
         id=str(inv.id),
         need_id=str(inv.need_id),
         need_title=inv.need.title if inv.need else "",
         candidate_id=str(inv.candidate_id),
         candidate_name=visible_name,
+        **resume,
         salary_from=inv.salary_from,
         salary_to=inv.salary_to,
         message=inv.message,
@@ -121,7 +144,22 @@ async def employer_list_invitations(
             )
         )
     ).all()
-    return [_employer_out(i) for i in invites]
+    # Резюме: активные категории кандидатов (специализация и грейд) одним запросом.
+    candidate_ids = {i.candidate_id for i in invites}
+    categories: dict[uuid.UUID, ConfirmedCategory] = {}
+    if candidate_ids:
+        categories = {
+            c.candidate_id: c
+            for c in (
+                await db.scalars(
+                    select(ConfirmedCategory).where(
+                        ConfirmedCategory.candidate_id.in_(candidate_ids),
+                        ConfirmedCategory.is_active.is_(True),
+                    )
+                )
+            ).all()
+        }
+    return [_employer_out(i, category=categories.get(i.candidate_id)) for i in invites]
 
 
 @router.post(
@@ -152,7 +190,14 @@ async def create_invitation(
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Потребность не найдена", recovery="none")
 
-    candidate = await db.get(CandidateProfile, payload.candidate_id)
+    candidate = await db.scalar(
+        select(CandidateProfile)
+        .where(CandidateProfile.id == payload.candidate_id)
+        .options(
+            selectinload(CandidateProfile.skills),
+            selectinload(CandidateProfile.account),
+        )
+    )
     if candidate is None or not candidate.is_published:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Кандидат не найден или скрыл профиль", recovery="none")
@@ -180,7 +225,7 @@ async def create_invitation(
         )
         if same_terms:
             response.status_code = 200  # безопасный повтор после потери связи
-            return _employer_out(existing)
+            return _employer_out(existing, category=category)
         raise errors.Problem(
             409, errors.CONFLICT, errors.E11_CONCURRENCY,
             "У этой компании уже есть открытое приглашение кандидату",
@@ -237,11 +282,18 @@ async def create_invitation(
                 detail="Параллельный запрос создал приглашение с другими условиями.",
                 recovery="none",
             )
+        # После rollback объекты сессии истекли — категорию перезагружаем.
+        category = await db.scalar(
+            select(ConfirmedCategory).where(
+                ConfirmedCategory.candidate_id == candidate_id,
+                ConfirmedCategory.is_active.is_(True),
+            )
+        )
         response.status_code = 200
-        return _employer_out(existing)
+        return _employer_out(existing, category=category)
     await db.refresh(invitation)
     # Вновь созданная строка ещё не несёт кандидата — передаём уже загруженный профиль
-    return _employer_out(invitation, profile=candidate)
+    return _employer_out(invitation, profile=candidate, category=category)
 
 
 @router.post(

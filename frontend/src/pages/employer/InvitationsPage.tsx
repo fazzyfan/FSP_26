@@ -79,8 +79,17 @@ export function InvitationsPage() {
           const revoked = inv.status === "accepted" && inv.contacts_revoked_at !== null;
           return (
             <div className="card inner" key={inv.id}>
-              <h3>{inv.candidate_name}</h3>
+              <h3>{inv.candidate_name || "Кандидат"}</h3>
               <p className="muted">{inv.need_title} · {salaryText(inv.salary_from, inv.salary_to)}</p>
+              <div className="resume-summary">
+                <p className="muted">
+                  {[inv.specialization_name, inv.grade_name].filter(Boolean).join(" · ") ||
+                    "Категория не подтверждена"}
+                  {inv.experience_months > 0 ? ` · стаж ${inv.experience_months} мес.` : ""}
+                </p>
+                {inv.skills.length > 0 && <p className="muted">Навыки: {inv.skills.join(", ")}</p>}
+                {inv.about && <p className="muted">{inv.about}</p>}
+              </div>
               <ul className="plain-list">
                 <li>
                   Статус: <b>{STATUS[inv.status] ?? inv.status}</b> {inv.responded_at && `(${fmtDate(inv.responded_at)})`}

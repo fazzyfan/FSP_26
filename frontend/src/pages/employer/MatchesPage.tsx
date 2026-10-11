@@ -20,6 +20,8 @@ export function MatchesPage() {
   const [salaryTo, setSalaryTo] = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  // кандидаты, которым приглашение уже отправлено (кнопка «Приглашение отправлено»)
+  const [sentTo, setSentTo] = useState<Set<string>>(new Set());
 
   const loadNeeds = useCallback(() => {
     employerApi
@@ -58,6 +60,7 @@ export function MatchesPage() {
   async function sendInvitation(e: FormEvent) {
     e.preventDefault();
     if (!inviteFor) return;
+    const candidateId = inviteFor;
     const from = Number(salaryFrom);
     const to = Number(salaryTo);
     if (!salaryFrom || !salaryTo || from <= 0 || to <= 0) {
@@ -76,11 +79,13 @@ export function MatchesPage() {
     setError(null);
     try {
       await employerApi.createInvitation(needId, {
-        candidate_id: inviteFor,
+        candidate_id: candidateId,
         salary_from: from,
         salary_to: to,
         message: message.trim(),
       });
+      // Кнопка меняется на «Приглашение отправлено» (до отмены/перезагрузки).
+      setSentTo((prev) => new Set(prev).add(candidateId));
       setInviteFor(null);
       setSalaryFrom("");
       setSalaryTo("");
@@ -194,11 +199,7 @@ export function MatchesPage() {
             <p className="muted">Совпавшие навыки: {m.matched_skills.join(", ")}</p>
           )}
 
-          {inviteFor !== m.candidate_id ? (
-            <button className="btn btn-primary" onClick={() => setInviteFor(m.candidate_id)}>
-              Пригласить
-            </button>
-          ) : (
+          {inviteFor === m.candidate_id ? (
             <form className="form inner-form" onSubmit={sendInvitation}>
               <div className="grid-2">
                 <label>
@@ -244,6 +245,14 @@ export function MatchesPage() {
                 </button>
               </div>
             </form>
+          ) : sentTo.has(m.candidate_id) ? (
+            <button className="btn btn-success" disabled title="Приглашение отправлено кандидату">
+              ✓ Приглашение отправлено
+            </button>
+          ) : (
+            <button className="btn btn-primary" onClick={() => setInviteFor(m.candidate_id)}>
+              Пригласить
+            </button>
           )}
         </div>
       ))}

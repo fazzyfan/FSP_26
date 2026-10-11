@@ -242,6 +242,12 @@ export interface EmployerInvitation {
   need_title: string;
   candidate_id: string;
   candidate_name: string;
+  // Резюме кандидата (публичная часть)
+  specialization_name: string | null;
+  grade_name: string | null;
+  experience_months: number;
+  skills: string[];
+  about: string | null;
   salary_from: number;
   salary_to: number;
   message: string;

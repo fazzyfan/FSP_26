@@ -10,12 +10,6 @@ export function EmployerCabinet() {
       <NavLink to="/employer/needs" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
         Потребности
       </NavLink>
-      <NavLink to="/employer/search" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-        Подбор кандидатов
-      </NavLink>
-      <NavLink to="/employer/invites" className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}>
-        Приглашения
-      </NavLink>
     </>
   );
   return <CabinetLayout title="кабинет работодателя" nav={nav} />;

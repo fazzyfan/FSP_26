@@ -49,6 +49,16 @@ export function HomePage() {
             </Link>
           </div>
         )}
+        {user?.role === "employer" && (
+          <div className="hero-actions">
+            <Link to="/employer/search" className="btn btn-primary">
+              Подбор кандидатов
+            </Link>
+            <Link to="/employer/invites" className="btn btn-outline">
+              Приглашения
+            </Link>
+          </div>
+        )}
       </section>
 
       <section className="steps">

@@ -30,13 +30,24 @@ class RespondIn(BaseModel):
 
 
 class EmployerInvitationOut(BaseModel):
-    """Проекция для работодателя (контакты не включены — FR-26)."""
+    """Проекция для работодателя (контакты не включены — FR-26).
+
+    Резюме кандидата (публичные данные: категория, опыт, навыки, «о себе»)
+    выдаётся без согласия на контакты — эти же данные работодатель видит
+    в подборе. Контакты (email/телефон) остаются закрытыми до принятия (FR-27).
+    """
 
     id: str
     need_id: str
     need_title: str
     candidate_id: str
     candidate_name: str
+    # Резюме кандидата (публичная часть)
+    specialization_name: str | None = None
+    grade_name: str | None = None
+    experience_months: int = 0
+    skills: list[str] = Field(default_factory=list)
+    about: str | None = None
     salary_from: int
     salary_to: int
     message: str

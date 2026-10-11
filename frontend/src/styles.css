@@ -100,6 +100,16 @@ body {
   color: var(--primary);
 }
 
+.btn-success {
+  background: var(--success);
+  color: #fff;
+}
+
+.btn-success:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text);
@@ -171,6 +181,19 @@ textarea:focus {
 .muted {
   color: var(--muted);
   font-weight: 400;
+}
+
+/* Резюме кандидата в приглашениях работодателя */
+.resume-summary {
+  margin: 6px 0 4px;
+  padding: 8px 12px;
+  background: var(--bg-soft, #f5f7fa);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.resume-summary p {
+  margin: 2px 0;
 }
 
 .field-error {
