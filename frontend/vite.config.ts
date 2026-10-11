@@ -11,6 +11,9 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // Railway даёт случайные поддомены *.up.railway.app — разрешаем их,
+    // иначе Vite блокирует запросы с неизвестного хоста.
+    allowedHosts: [".up.railway.app"],
     proxy: {
       "/api": {
         target: proxyTarget,
