@@ -275,19 +275,42 @@ async def main() -> int:
         if cand_profiles:
             sem5 = asyncio.Semaphore(10)
             marker = uuid.uuid4().hex[:8]
-            await asyncio.gather(*[
-                worker(rc, "POST", f"/employer/needs/{need_id}/invitations", sem5, lat_invite,
-                       errors, headers=emp_headers,
-                       json_body={
-                           "candidate_id": cand_profiles[i % len(cand_profiles)],
-                           "salary_from": 150_000,
-                           "salary_to": 200_000,
-                           "message": f"Нагрузочный прогон {marker} — описание условий достаточно длинное.",
-                       },
-                       # 409 E11 = уже существует открытое приглашение (предсуществующее
-                       # состояние от предыдущих прогонов) — не считается ошибкой пути
-                       ok_codes={200, 201, 409}, label="invite") for i in range(20)
-            ])
+            invite_statuses: list[int] = []
+
+            async def invite_worker(i: int) -> None:
+                async with sem5:
+                    t0 = asyncio.get_running_loop().time()
+                    try:
+                        r = await rc.post(f"/employer/needs/{need_id}/invitations", headers=emp_headers,
+                                          json={
+                                              "candidate_id": cand_profiles[i % len(cand_profiles)],
+                                              "salary_from": 150_000,
+                                              "salary_to": 200_000,
+                                              "message": f"Нагрузочный прогон {marker} — описание условий достаточно длинное.",
+                                          })
+                        lat_invite.append((asyncio.get_running_loop().time() - t0) * 1000)
+                        invite_statuses.append(r.status_code)
+                        if r.status_code >= 500:
+                            errors.append(f"invite:{r.status_code}")
+                    except Exception as exc:  # noqa: BLE001
+                        errors.append(f"invite:{exc}")
+
+            await asyncio.gather(*[invite_worker(i) for i in range(20)])
+            # Ровно один 201 (создание), остальные 200 (идемпотентный повтор),
+            # без 500; в БД — одна строка приглашения.
+            created = invite_statuses.count(201)
+            repeated = invite_statuses.count(200)
+            if created != 1 or repeated != 19 or any(s >= 500 for s in invite_statuses):
+                errors.append(f"invite:статусы {sorted(set(invite_statuses))} (201={created}, 200={repeated})")
+            from sqlalchemy import func as sa_func
+            from app.db.base import async_session_factory
+            from app.models.invitation import Invitation
+            async with async_session_factory() as s:
+                cnt = (await s.execute(
+                    sa_func.count(Invitation.id).select().where(Invitation.message.like(f"Нагрузочный прогон {marker}%"))
+                )).scalar()
+                if cnt != 1:
+                    errors.append(f"invite:в БД {cnt} строк вместо 1")
             # Очистка созданных приглашений: открытые предложения не должны
             # мешать повторным прогонам acceptance (verify_stage1).
             from sqlalchemy import delete

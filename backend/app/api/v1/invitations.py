@@ -187,10 +187,15 @@ async def create_invitation(
             detail="Отменить текущее или дождаться ответа кандидата.", recovery="none",
         )
 
+    # ID сохраняем до commit: после rollback объекты сессии истекут,
+    # и обращение к company.id/candidate.id вызовет ленивую загрузку.
+    company_id = company.id
+    candidate_id = candidate.id
+    need_id = need.id
     invitation = Invitation(
-        need_id=need.id,
-        company_id=company.id,
-        candidate_id=candidate.id,
+        need_id=need_id,
+        company_id=company_id,
+        candidate_id=candidate_id,
         salary_from=payload.salary_from,
         salary_to=payload.salary_to,
         message=payload.message,
@@ -204,16 +209,21 @@ async def create_invitation(
         # Идемпотентный ответ (200) допустим только при совпадении условий —
         # иначе 409: разные условия не должны «растворяться» в существующем.
         await db.rollback()
-        existing = await _open_invitation(db, company.id, candidate.id)
+        # Один eager-load запрос в свежей транзакции (после rollback объекты
+        # сессии истекли — ленивые загрузки под нагрузкой падают на пуле).
+        existing = await db.scalar(
+            _inv_with_account(
+                select(Invitation).where(
+                    Invitation.company_id == company_id,
+                    Invitation.candidate_id == candidate_id,
+                    Invitation.status.in_(OPEN_STATUSES),
+                    Invitation.contacts_revoked_at.is_(None),
+                )
+            )
+        )
         if existing is None:
             raise errors.Problem(409, errors.CONFLICT, errors.E11_CONCURRENCY,
                                  "Не удалось создать приглашение, повторите запрос", recovery="retry")
-        # После rollback объекты сессии истекли: перечитываем в свежей
-        # транзакции с eager-load, чтобы ответ не тянул ленивые загрузки
-        # под нагрузкой (пул соединений).
-        existing = await db.scalar(
-            _inv_with_account(select(Invitation).where(Invitation.id == existing.id))
-        )
         same_terms = (
             existing.need_id == need.id
             and existing.salary_from == payload.salary_from

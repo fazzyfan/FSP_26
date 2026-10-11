@@ -210,19 +210,31 @@ async def main() -> int:
                 "candidate_id": cand_id, "salary_from": 100000, "salary_to": 150000,
                 "message": "Приглашаем на позицию backend-разработчика."})
             check("П.3 повтор с другим need_id -> 409", r.status_code == 409, str(r.status_code))
-            # П.3: одновременные accept и withdraw — один 200, другой 409
-            await c.post("/auth/logout")
-            csrf = await login("candidate@example.com")
-            h = {"X-CSRF-Token": csrf}
-            r_acc = await c.post(f"/candidate/invitations/{inv['id']}/respond", headers=h, json={"decision": "accept"})
-            await c.post("/auth/logout")
-            csrf_e = await login("employer@example.com")
-            he = {"X-CSRF-Token": csrf_e}
-            r_wd = await c.post(f"/employer/invitations/{inv['id']}/withdraw", headers=he)
-            check("П.3 accept+withdraw: один успех, один 409",
-                  (r_acc.status_code == 200 and r_wd.status_code == 409) or
-                  (r_acc.status_code == 409 and r_wd.status_code == 200),
-                  f"accept={r_acc.status_code} withdraw={r_wd.status_code}")
+            # П.3: одновременные accept и withdraw — один 200, другой 409.
+            # Отдельные клиенты/сессии для каждой роли, запуск через asyncio.gather.
+            inv2 = (await c.post(f"/employer/needs/{need['id']}/invitations", headers=he, json={
+                "candidate_id": cand_id, "salary_from": 100000, "salary_to": 150000,
+                "message": "Приглашаем на позицию backend-разработчика (гонка)."})).json()
+            async with httpx.AsyncClient(base_url=BASE, timeout=15.0) as cand_c, \
+                       httpx.AsyncClient(base_url=BASE, timeout=15.0) as emp_c:
+                await cand_c.post("/auth/login", json={"email": "candidate@example.com", "password": PASSWORD})
+                await emp_c.post("/auth/login", json={"email": "employer@example.com", "password": PASSWORD})
+                ch = {"X-CSRF-Token": cand_c.cookies.get("fsp_csrf") or ""}
+                eh = {"X-CSRF-Token": emp_c.cookies.get("fsp_csrf") or ""}
+
+                async def do_accept() -> int:
+                    r = await cand_c.post(f"/candidate/invitations/{inv2['id']}/respond",
+                                          headers=ch, json={"decision": "accept"})
+                    return r.status_code
+
+                async def do_withdraw() -> int:
+                    r = await emp_c.post(f"/employer/invitations/{inv2['id']}/withdraw", headers=eh)
+                    return r.status_code
+
+                r_acc, r_wd = await asyncio.gather(do_accept(), do_withdraw())
+            check("П.3 accept+withdraw (gather): один успех, один 409",
+                  (r_acc == 200 and r_wd == 409) or (r_acc == 409 and r_wd == 200),
+                  f"accept={r_acc} withdraw={r_wd}")
             if r_acc.status_code == 200:
                 invs = (await c.get("/employer/invitations")).json()
                 acc = next(i for i in invs if i["id"] == inv["id"])
