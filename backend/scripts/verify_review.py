@@ -237,7 +237,7 @@ async def main() -> int:
             check("П.3 accept+withdraw (gather): один успех, один 409",
                   (r_acc == 200 and r_wd == 409) or (r_acc == 409 and r_wd == 200),
                   f"accept={r_acc} withdraw={r_wd}")
-            if r_acc.status_code == 200:
+            if r_acc == 200:
                 invs = (await c.get("/employer/invitations")).json()
                 acc = next(i for i in invs if i["id"] == inv["id"])
                 check("П.3 после согласия: полное ФИО", acc["candidate_name"] == cand_full, acc["candidate_name"])
