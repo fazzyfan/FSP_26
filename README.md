@@ -82,6 +82,33 @@ docker compose up --build
 API при старте сам применяет миграции (`alembic upgrade head`) и загружает справочники
 и демо-данные (`python -m app.db.seed`) — повторный запуск ничего не дублирует (FR-28).
 
+## Развёртывание на Railway
+
+В репозитории уже лежат конфиги [`backend/railway.json`](backend/railway.json) и
+[`frontend/railway.json`](frontend/railway.json) — Railway соберёт оба сервиса по Dockerfile.
+
+1. **Создайте проект** в Railway → **Deploy from GitHub** → выберите `fazzyfan/FSP_26`.
+2. **Добавьте PostgreSQL**: New → Database → PostgreSQL. Скопируйте `DATABASE_URL`.
+3. **Сервис API** (создастся автоматически):
+   - Settings → **Root Directory** = `backend`
+   - Variables:
+     - `FSP_DATABASE_URL` = `postgresql+asyncpg://<user>:<pass>@<host>:<port>/<db>`
+       (из Railway Postgres, замените префикс `postgres://` на `postgresql+asyncpg://`)
+     - `FSP_MAIL_BACKEND` = `log`
+     - `FSP_CONFIRM_BASE_URL` = `https://<web-сервис>.up.railway.app/confirm-email`
+     - `FSP_CORS_ORIGINS` = `https://<web-сервис>.up.railway.app`
+     - `FSP_COOKIE_SECURE` = `true`
+     - `FSP_DEBUG` = `false`
+   - Start command задан в `railway.json`: миграции + seed + uvicorn на `$PORT`.
+4. **Сервис Web** (второй сервис из того же репозитория):
+   - Settings → **Root Directory** = `frontend`
+   - Variables: `VITE_PROXY_TARGET` = `https://<api-сервис>.up.railway.app`
+   - Start command задан в `railway.json` (Vite dev с прокси `/api` на API).
+5. **Демо-доступы** после деплоя — те же, что и локально (см. ниже).
+
+> Примечание: для продакшена рекомендуется заменить dev-режим фронтенда на
+> production-сборку (nginx/static) и включить реальную почту (`FSP_MAIL_BACKEND=smtp`).
+
 ### Демо-доступы
 
 | Роль | Email | Пароль |
