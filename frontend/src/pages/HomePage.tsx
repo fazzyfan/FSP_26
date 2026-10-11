@@ -54,6 +54,9 @@ export function HomePage() {
             <Link to="/employer/search" className="btn btn-primary">
               Подбор кандидатов
             </Link>
+            <Link to="/employer/needs" className="btn btn-outline">
+              Потребности
+            </Link>
             <Link to="/employer/invites" className="btn btn-outline">
               Приглашения
             </Link>

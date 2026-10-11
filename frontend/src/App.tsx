@@ -41,9 +41,51 @@ export default function App() {
             />
             <Route path="/confirm-email" element={<ConfirmEmailPage />} />
             <Route path="/confirm-email/pending" element={<PendingEmailPage />} />
+
+            {/* Отдельные вкладки для авторизованных (без сайдбара кабинета) */}
+            <Route
+              path="/candidate/test"
+              element={
+                <RequireAuth roles={["candidate"]}>
+                  <AssessmentPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/candidate/invites"
+              element={
+                <RequireAuth roles={["candidate"]}>
+                  <CandidateInvitationsPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/employer/needs"
+              element={
+                <RequireAuth roles={["employer"]}>
+                  <NeedsPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/employer/search"
+              element={
+                <RequireAuth roles={["employer"]}>
+                  <MatchesPage />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/employer/invites"
+              element={
+                <RequireAuth roles={["employer"]}>
+                  <EmployerInvitationsPage />
+                </RequireAuth>
+              }
+            />
           </Route>
 
-          {/* Кабинет кандидата */}
+          {/* Кабинет кандидата — только профиль и резюме */}
           <Route
             path="/candidate"
             element={
@@ -54,11 +96,9 @@ export default function App() {
           >
             <Route index element={<Navigate to="/candidate/profile" replace />} />
             <Route path="profile" element={<ProfileForm />} />
-            <Route path="test" element={<AssessmentPage />} />
-            <Route path="invites" element={<CandidateInvitationsPage />} />
           </Route>
 
-          {/* Кабинет работодателя */}
+          {/* Кабинет работодателя — только профиль компании */}
           <Route
             path="/employer"
             element={
@@ -69,9 +109,6 @@ export default function App() {
           >
             <Route index element={<Navigate to="/employer/company" replace />} />
             <Route path="company" element={<CompanyForm />} />
-            <Route path="needs" element={<NeedsPage />} />
-            <Route path="search" element={<MatchesPage />} />
-            <Route path="invites" element={<EmployerInvitationsPage />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
