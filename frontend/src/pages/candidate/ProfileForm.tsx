@@ -147,6 +147,21 @@ export function ProfileForm() {
     }
   }
 
+  async function grantConsent(code: string) {
+    setConsentBusy(true);
+    try {
+      const r = await candidateApi.grantConsent(code);
+      setConsents(r.consents);
+      setStatus("Согласие возвращено.");
+      const p = await candidateApi.getProfile();
+      if (p) setDraft((d) => ({ ...d, is_published: p.is_published, show_fsp: p.show_fsp }));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось вернуть согласие");
+    } finally {
+      setConsentBusy(false);
+    }
+  }
+
   if (!loaded) return <div className="card">Загрузка…</div>;
 
   return (
@@ -256,9 +271,13 @@ export function ProfileForm() {
               ) : (
                 <span className="muted">· отозвано{c.effect ? ` — ${c.effect}` : ""}</span>
               )}{" "}
-              {c.granted && (
+              {c.granted ? (
                 <button className="btn btn-outline btn-sm" disabled={consentBusy} onClick={() => void revokeConsent(c.code)}>
                   Отозвать
+                </button>
+              ) : (
+                <button className="btn btn-primary btn-sm" disabled={consentBusy} onClick={() => void grantConsent(c.code)}>
+                  Вернуть согласие
                 </button>
               )}
             </li>

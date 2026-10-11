@@ -123,6 +123,11 @@ export const candidateApi = {
       method: "POST",
       body: { code },
     }),
+  grantConsent: (code: string) =>
+    api<{ consents: import("./types").ConsentState[] }>("/candidate/consents/grant", {
+      method: "POST",
+      body: { code },
+    }),
   getFspAchievements: () => api<{ member_id: string | null; visible: boolean; achievements: { code: string; title: string; description: string; verified: boolean }[] }>("/candidate/fsp/achievements"),
   // Оценка и категория (FR-08..FR-13)
   getAssessment: () => api<import("./types").AssessmentSummary>("/candidate/assessment"),

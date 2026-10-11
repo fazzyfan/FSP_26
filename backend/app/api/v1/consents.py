@@ -128,3 +128,49 @@ async def revoke_consent(
 
     await db.commit()
     return await list_consents(account, db)
+
+
+@router.post(
+    "/candidate/consents/grant",
+    response_model=ConsentsOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def grant_consent(
+    payload: RevokeIn,
+    account: Account = CandidateDep,
+    db: AsyncSession = Depends(get_db),
+) -> ConsentsOut:
+    """Возврат отозванного согласия (FR-04): эффекты восстанавливаются.
+
+    - profile_publication — профиль снова публикуется (is_published=True);
+    - fsp_showcase — показ достижений ФСП включается (show_fsp=True);
+    - data_processing — аккаунт реактивируется (status=ACTIVE).
+    """
+    doc = await db.scalar(select(ConsentDoc).where(ConsentDoc.code == payload.code))
+    if doc is None:
+        raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
+                             "Согласие не найдено", recovery="none")
+    ctype = ConsentType(payload.code)
+
+    # Убираем отметку об отзыве и фиксируем возврат в истории
+    revoked = await db.scalars(
+        select(ConsentEvent).where(
+            ConsentEvent.account_id == account.id,
+            ConsentEvent.consent_type == ctype,
+            ConsentEvent.granted.is_(False),
+        )
+    )
+    for ev in revoked:
+        await db.delete(ev)
+    db.add(ConsentEvent(account_id=account.id, consent_type=ctype, version=doc.version, granted=True))
+
+    profile = await db.scalar(select(CandidateProfile).where(CandidateProfile.account_id == account.id))
+    if ctype == ConsentType.PROFILE_PUBLICATION and profile is not None:
+        profile.is_published = True
+    elif ctype == ConsentType.FSP_SHOWCASE and profile is not None:
+        profile.show_fsp = True
+    elif ctype == ConsentType.DATA_PROCESSING:
+        account.status = AccountStatus.ACTIVE
+
+    await db.commit()
+    return await list_consents(account, db)
