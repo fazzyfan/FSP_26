@@ -3,6 +3,8 @@ import { Link, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
 export function PublicLayout() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   return (
     <div className="layout">
       <header className="topbar">
@@ -10,10 +12,30 @@ export function PublicLayout() {
           ФСП · обратный найм
         </Link>
         <nav className="topnav">
-          <Link to="/login">Вход</Link>
-          <Link to="/register" className="btn btn-primary btn-sm">
-            Регистрация
-          </Link>
+          {user ? (
+            <>
+              <span className="muted">{user.email}</span>
+              <Link to={user.role === "candidate" ? "/candidate" : "/employer"} className="btn btn-outline btn-sm">
+                Кабинет
+              </Link>
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={async () => {
+                  await logout();
+                  navigate("/");
+                }}
+              >
+                Выйти
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/login">Вход</Link>
+              <Link to="/register" className="btn btn-primary btn-sm">
+                Регистрация
+              </Link>
+            </>
+          )}
         </nav>
       </header>
       <main className="content">
