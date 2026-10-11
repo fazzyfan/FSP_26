@@ -102,6 +102,23 @@ python -m alembic upgrade head
 python -m app.db.seed
 ```
 
+### Сброс пересдачи теста (кулдауны 24 ч / 90 дней)
+
+Проверочный скрипт `verify_review.py` в начале удаляет попытки и подтверждённую
+категорию демо-кандидата — после него тест можно проходить заново сразу:
+
+```bash
+docker compose exec -T api python scripts/verify_review.py
+```
+
+Скрипт также прогоняет 22 проверки по пунктам ревью UPD 4 (автосохранение,
+снимок теста, приглашения, подбор, ФСП, банк заданий, целостность БД) и
+завершается кодом 0 при полном успехе. Ручной сброс без скрипта:
+
+```bash
+docker compose exec -T db psql -U fsp -d fsp -c "DELETE FROM test_attempt_answers WHERE attempt_id IN (SELECT a.id FROM test_attempts a JOIN candidate_profiles p ON p.id=a.candidate_id JOIN accounts ac ON ac.id=p.account_id WHERE ac.email_normalized='candidate@example.com'); DELETE FROM test_attempts WHERE candidate_id IN (SELECT p.id FROM candidate_profiles p JOIN accounts ac ON ac.id=p.account_id WHERE ac.email_normalized='candidate@example.com'); DELETE FROM confirmed_categories WHERE candidate_id IN (SELECT p.id FROM candidate_profiles p JOIN accounts ac ON ac.id=p.account_id WHERE ac.email_normalized='candidate@example.com');"
+```
+
 ## Запуск вручную (без Docker)
 
 Предполагается локальный PostgreSQL (например, на `localhost:5433`), Python ≥3.12, Node ≥20.
