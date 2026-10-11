@@ -24,7 +24,10 @@ export function HomePage() {
   return (
     <div className="home">
       <section className="hero">
-        <h1>Обратный найм ИТ-специалистов</h1>
+        <span className="hero-eyebrow">Обратный найм · MVP</span>
+        <h1>
+          Обратный найм <span className="grad">ИТ-специалистов</span>
+        </h1>
         <p className="lead">
           Кандидат подтверждает уровень тестом. Работодатель находит подходящих людей и первым
           отправляет предложение с зарплатой.
