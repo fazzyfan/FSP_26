@@ -212,6 +212,8 @@ async def main() -> int:
             check("П.3 повтор с другим need_id -> 409", r.status_code == 409, str(r.status_code))
             # П.3: одновременные accept и withdraw — один 200, другой 409.
             # Отдельные клиенты/сессии для каждой роли, запуск через asyncio.gather.
+            # Сначала отзываем первое приглашение, чтобы освободить пару (company, candidate).
+            await c.post(f"/employer/invitations/{inv['id']}/withdraw", headers=he)
             inv2 = (await c.post(f"/employer/needs/{need['id']}/invitations", headers=he, json={
                 "candidate_id": cand_id, "salary_from": 100000, "salary_to": 150000,
                 "message": "Приглашаем на позицию backend-разработчика (гонка)."})).json()
