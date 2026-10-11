@@ -49,6 +49,8 @@ async def main() -> int:
                 "DELETE FROM invitations WHERE candidate_id IN ("
                 "SELECT p.id FROM candidate_profiles p JOIN accounts ac ON ac.id=p.account_id "
                 "WHERE ac.email_normalized='candidate@example.com')"))
+            await db.execute(text(
+                "UPDATE accounts SET status='active' WHERE email_normalized='candidate@example.com'"))
             await db.commit()
 
     await reset_candidate_state()

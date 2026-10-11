@@ -392,6 +392,9 @@ async def submit_attempt(
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Попытка не найдена", recovery="none")
     attempt = await db.get(TestAttempt, attempt_id)
+    # identity map может вернуть объект из API-слоя: перечитываем ответы,
+    # чтобы параллельное автосохранение не потерялось при подсчёте
+    await db.refresh(attempt, attribute_names=["answers"])
 
     if attempt.questions_snapshot:
         required_ids = {uuid.UUID(q["id"]) for q in attempt.questions_snapshot}
