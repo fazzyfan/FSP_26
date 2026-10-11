@@ -201,15 +201,13 @@ async def create_invitation(
     if candidate is None or not candidate.is_published:
         raise errors.Problem(404, errors.RESOURCE_NOT_AVAILABLE, errors.E09_ACCESS,
                              "Кандидат не найден или скрыл профиль", recovery="none")
+    # Категория не обязательна: приглашать можно и кандидатов, не прошедших тест.
+    # Категория используется только для резюме (специализация/грейд) в ответе.
     category = await db.scalar(
         select(ConfirmedCategory).where(
             ConfirmedCategory.candidate_id == candidate.id, ConfirmedCategory.is_active.is_(True)
         )
     )
-    if category is None:
-        raise errors.Problem(409, errors.INVALID_STATE, errors.E12_STATE,
-                             "У кандидата нет подтверждённой категории",
-                             detail="Приглашать можно кандидатов, прошедших тест.", recovery="correct_input")
 
     # Одно открытое приглашение от компании кандидату (FR-23, NFR-06)
     existing = await _open_invitation(db, company.id, candidate.id)
