@@ -1,13 +1,14 @@
 """Проверки Этапа 3 «Подбор» против живого сервера.
 
 Покрывает:
-- исключение неподходящих специализаций и грейдов;
+- выдачу всех опубликованных кандидатов с меткой «прошёл/не прошёл тест»;
 - формулу балла 60% компетенции + 30% тест + 10% ФСП (с объяснениями);
 - фильтры по грейду и минимальному баллу;
 - пагинацию.
 
 Скрипт создаёт собственных кандидатов и тестовую потребность (детерминированные
-данные, не зависящие от демо-наполнения). Запуск (в контейнере API):
+данные, не зависящие от демо-наполнения) и удаляет их после прогона (teardown).
+Запуск (в контейнере API):
     docker compose exec -T api python scripts/verify_stage3.py
 """
 
@@ -154,68 +155,87 @@ async def main() -> int:
     data = await setup_data()
     need_id = data["need_id"]
 
-    async with httpx.AsyncClient(base_url=base, timeout=15.0) as emp:
-        r = await emp.post("/auth/login", json={"email": EMPLOYER_EMAIL, "password": PASSWORD})
-        if r.status_code != 200:
-            print(f"Вход работодателя не удался: {r.status_code} {r.text[:300]}")
-            return 1
+    try:
+        async with httpx.AsyncClient(base_url=base, timeout=15.0) as emp:
+            r = await emp.post("/auth/login", json={"email": EMPLOYER_EMAIL, "password": PASSWORD})
+            if r.status_code != 200:
+                print(f"Вход работодателя не удался: {r.status_code} {r.text[:300]}")
+                return 1
 
-        url = f"/employer/needs/{need_id}/matches"
+            url = f"/employer/needs/{need_id}/matches"
 
-        # --- полная выдача: исключены D (специализация) и C (грейд) ---
-        r = await emp.get(f"{url}?page=1&page_size=10")
-        check("подбор 200", r.status_code == 200, str(r.status_code))
-        page = r.json()
-        items = page["items"]
-        names = [i["full_name"] for i in items]
-        # Демо-кандидат с подтверждённой категорией тоже может попасть в выдачу —
-        # проверяем именно контрольных кандидатов A-D.
-        check("исключены неподходящие специализация и грейд",
-              "Кандидат D" not in names and "Кандидат C" not in names
-              and "Кандидат A" in names and "Кандидат B" in names,
-              f"total={page['total']}")
+            # --- полная выдача: все опубликованные кандидаты, тест-статус отдельно ---
+            r = await emp.get(f"{url}?page=1&page_size=10")
+            check("подбор 200", r.status_code == 200, str(r.status_code))
+            page = r.json()
+            items = page["items"]
+            names = [i["full_name"] for i in items]
+            by_name = {i["full_name"]: i for i in items}
+            check("все опубликованные кандидаты в выдаче (A-D + демо)",
+                  "Кандидат A" in names and "Кандидат B" in names
+                  and "Кандидат C" in names and "Кандидат D" in names
+                  and "Иван Т." in names,
+                  f"total={page['total']}")
 
-        by_name = {i["full_name"]: i for i in items}
-        a = by_name.get("Кандидат A")
-        b = by_name.get("Кандидат B")
-        check("кандидат A: 60(блок 1: 100%) + 30(тест 100%) + 0 = 90",
-              a is not None and a["score"] == 90
-              and a["score_breakdown"] == {"competencies": 60.0, "test": 30.0, "fsp": 0.0},
-              f"score={a and a['score']}")
-        check("кандидат B: 30(блок 1: 50%) + 21(тест 70%) + 0 = 51",
-              b is not None and b["score"] == 51
-              and b["score_breakdown"] == {"competencies": 30.0, "test": 21.0, "fsp": 0.0},
-              f"score={b and b['score']}")
-        check("сортировка по баллу", a is not None and b is not None
-              and items.index(a) < items.index(b),
-              f"позиции A={items.index(a) if a else '-'}, B={items.index(b) if b else '-'}")
-        check("объяснения включают компетенции, тест и ФСП",
-              all(any("Компетенции" in rr for rr in i["reasons"])
-                  and any("Результат теста" in rr for rr in i["reasons"])
-                  and any("ФСП" in rr for rr in i["reasons"]) for i in items))
+            a = by_name.get("Кандидат A")
+            b = by_name.get("Кандидат B")
+            ivan = by_name.get("Иван Т.")
+            check("кандидат A: 60(блок 1: 100%) + 30(тест 100%) + 0 = 90, тест пройден",
+                  a is not None and a["score"] == 90 and a["test_passed"] is True
+                  and a["score_breakdown"] == {"competencies": 60.0, "test": 30.0, "fsp": 0.0},
+                  f"score={a and a['score']}")
+            check("кандидат B: 30(блок 1: 50%) + 21(тест 70%) + 0 = 51",
+                  b is not None and b["score"] == 51
+                  and b["score_breakdown"] == {"competencies": 30.0, "test": 21.0, "fsp": 0.0},
+                  f"score={b and b['score']}")
+            check("демо-кандидат без категории: тест не пройден, балл 0",
+                  ivan is not None and ivan["test_passed"] is False and ivan["score"] == 0,
+                  f"score={ivan and ivan['score']}")
+            check("сортировка по баллу: A выше B",
+                  a is not None and b is not None and items.index(a) < items.index(b),
+                  f"позиции A={items.index(a) if a else '-'}, B={items.index(b) if b else '-'}")
+            check("объяснения прошедших тест включают компетенции, тест и ФСП",
+                  all(any("Компетенции" in rr for rr in i["reasons"])
+                      and any("Результат теста" in rr for rr in i["reasons"])
+                      and any("ФСП" in rr for rr in i["reasons"])
+                      for i in items if i["test_passed"]))
 
-        # --- фильтры ---
-        r = await emp.get(f"{url}?grade=middle")
-        check("фильтр grade=middle — пусто", r.json()["total"] == 0, str(r.json()["total"]))
-        r = await emp.get(f"{url}?min_score=70")
-        names70 = [i["full_name"] for i in r.json()["items"]]
-        check("фильтр min_score=70 — A есть, B (51) отсечён",
-              "Кандидат A" in names70 and "Кандидат B" not in names70, str(names70))
-        r = await emp.get(f"{url}?grade=junior&min_score=50")
-        names50 = [i["full_name"] for i in r.json()["items"]]
-        check("фильтры вместе — A и B", "Кандидат A" in names50 and "Кандидат B" in names50, str(names50))
+            # --- фильтры ---
+            r = await emp.get(f"{url}?grade=middle")
+            names_mid = [i["full_name"] for i in r.json()["items"]]
+            check("фильтр grade=middle — только C (middle)",
+                  r.json()["total"] == 1 and "Кандидат C" in names_mid, str(names_mid))
+            r = await emp.get(f"{url}?min_score=70")
+            names70 = [i["full_name"] for i in r.json()["items"]]
+            check("фильтр min_score=70 — A есть, B (51) отсечён",
+                  "Кандидат A" in names70 and "Кандидат B" not in names70, str(names70))
+            r = await emp.get(f"{url}?grade=junior&min_score=50")
+            names50 = [i["full_name"] for i in r.json()["items"]]
+            check("фильтры вместе — A и B",
+                  "Кандидат A" in names50 and "Кандидат B" in names50, str(names50))
 
-        # --- пагинация ---
-        r = await emp.get(f"{url}?page=1&page_size=1")
-        p1 = r.json()
-        r = await emp.get(f"{url}?page=2&page_size=1")
-        p2 = r.json()
-        check("пагинация page_size=1: страницы не пустые, A и B на разных",
-              p1["pages"] >= 2 and len(p1["items"]) == 1 and len(p2["items"]) == 1
-              and p1["items"][0]["candidate_id"] != p2["items"][0]["candidate_id"],
-              f"pages={p1['pages']}, page2_len={len(p2['items'])}")
-        r = await emp.get(f"{url}?page=99&page_size=10")
-        check("страница за пределами — пустой items", r.json()["items"] == [], str(r.json()["total"]))
+            # --- пагинация ---
+            r = await emp.get(f"{url}?page=1&page_size=1")
+            p1 = r.json()
+            r = await emp.get(f"{url}?page=2&page_size=1")
+            p2 = r.json()
+            check("пагинация page_size=1: страницы не пустые, A и B на разных",
+                  p1["pages"] >= 2 and len(p1["items"]) == 1 and len(p2["items"]) == 1
+                  and p1["items"][0]["candidate_id"] != p2["items"][0]["candidate_id"],
+                  f"pages={p1['pages']}, page2_len={len(p2['items'])}")
+            r = await emp.get(f"{url}?page=99&page_size=10")
+            check("страница за пределами — пустой items", r.json()["items"] == [], str(r.json()["total"]))
+    finally:
+        # Teardown: не оставляем контрольных кандидатов и потребность после прогона.
+        from sqlalchemy import delete
+        from app.db.base import async_session_factory
+        from app.models.account import Account
+        from app.models.employer import EmployerNeed
+
+        async with async_session_factory() as s:
+            await s.execute(delete(Account).where(Account.email_normalized.like("match-%")))
+            await s.execute(delete(EmployerNeed).where(EmployerNeed.title.like("Этап3:%")))
+            await s.commit()
 
     if failures:
         print(f"\nПровалено проверок: {len(failures)}: {failures}")

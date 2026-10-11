@@ -26,6 +26,7 @@ from app.models.account import Account, AccountStatus
 from app.models.assessment import ConfirmedCategory, TestAttempt, TestAttemptStatus
 from app.models.candidate import CandidateProfile
 from app.models.employer import EmployerNeed
+from app.models.reference import Grade
 from app.services import fsp as fsp_service
 
 COMPETENCY_WEIGHT = 60
@@ -60,6 +61,7 @@ class MatchCandidate:
     experience_months: int
     about: str | None = None
     skills: list[str] = field(default_factory=list)
+    test_passed: bool = False
     score: int = 0
     score_breakdown: dict[str, float] = field(default_factory=dict)
     matched_skills: list[str] = field(default_factory=list)
@@ -85,30 +87,31 @@ async def match_candidates_for_need(
     grade_code: str | None = None,
     min_score: int = 0,
 ) -> list[MatchCandidate]:
-    """Опубликованные кандидаты с активной категорией, подходящей потребности.
+    """Все опубликованные кандидаты с активным аккаунтом (FR-18..FR-21).
 
-    Исключаются кандидаты с другой специализацией и грейдом вне диапазона
-    потребности (или вне выбранного фильтра grade_code), а также кандидаты
-    с неактивным аккаунтом (отзыв обработки данных, FR-04).
+    Подтверждённая категория не обязательна: кандидаты без неё показываются
+    с меткой «тест не пройден» и баллом 0 (работодатель видит резюме всех).
+    Фильтр grade_code применяется только к кандидатам с подтверждённой
+    категорией; кандидаты с неактивным аккаунтом исключаются (FR-04).
     """
     need_grade_ids = {g.id for g in need.grades}
-    grade_by_code = {g.code: g.id for g in need.grades}
+    # Фильтр по грейду работает по всему справочнику, а не только по грейдам потребности.
+    grade_by_code = {g.code: g.id for g in (await db.scalars(select(Grade))).all()}
 
     stmt = (
         select(CandidateProfile, ConfirmedCategory)
-        .join(ConfirmedCategory, ConfirmedCategory.candidate_id == CandidateProfile.id)
+        .outerjoin(
+            ConfirmedCategory,
+            (ConfirmedCategory.candidate_id == CandidateProfile.id)
+            & (ConfirmedCategory.is_active.is_(True)),
+        )
         .join(Account, Account.id == CandidateProfile.account_id)
         .options(selectinload(CandidateProfile.skills))
         .where(
             CandidateProfile.is_published.is_(True),
-            ConfirmedCategory.is_active.is_(True),
             Account.status == AccountStatus.ACTIVE,
         )
     )
-    if need.specialization_id is not None:
-        stmt = stmt.where(ConfirmedCategory.specialization_id == need.specialization_id)
-    if need_grade_ids:
-        stmt = stmt.where(ConfirmedCategory.grade_id.in_(need_grade_ids))
     if grade_code is not None:
         gid = grade_by_code.get(grade_code)
         if gid is None:
@@ -121,9 +124,10 @@ async def match_candidates_for_need(
         return []
 
     # Подтверждающие попытки: только успешные и именно по активной категории.
-    # Никаких «последних попыток» другой категории или проваленных.
-    # pairs — кортежи (категория, профиль).
-    attempt_ids = {c.source_attempt_id for c, _ in pairs if c.source_attempt_id is not None}
+    attempt_ids = {
+        c.source_attempt_id for c, _ in pairs
+        if c is not None and c.source_attempt_id is not None
+    }
     confirming: dict[uuid.UUID, TestAttempt] = {}
     if attempt_ids:
         confirming = {
@@ -143,13 +147,38 @@ async def match_candidates_for_need(
 
     results: list[MatchCandidate] = []
     for category, profile in pairs:
-        reasons: list[str] = []
-        if need.specialization_id is not None:
-            reasons.append(f"Специализация «{category.specialization.name}» соответствует потребности")
+        if category is None:
+            # Кандидат без подтверждённой категории: тест не пройден (FR-13).
+            results.append(
+                MatchCandidate(
+                    candidate_id=profile.id,
+                    full_name=profile.public_name or profile.full_name,
+                    specialization_name="",
+                    grade_code="",
+                    grade_name="",
+                    experience_months=profile.experience_months,
+                    about=profile.about,
+                    skills=[s.name for s in profile.skills],
+                    test_passed=False,
+                    score=0,
+                    score_breakdown={"competencies": 0.0, "test": 0.0, "fsp": 0.0},
+                    matched_skills=[],
+                    reasons=["Тест не пройден — у кандидата нет подтверждённой категории."],
+                )
+            )
+            continue
 
+        reasons: list[str] = []
+        spec_ok = need.specialization_id is None or category.specialization_id == need.specialization_id
         grade_ok = not need_grade_ids or category.grade_id in need_grade_ids
+        if spec_ok:
+            reasons.append(f"Специализация «{category.specialization.name}» соответствует потребности")
+        else:
+            reasons.append(f"Специализация «{category.specialization.name}» не совпадает с потребностью")
         if grade_ok:
             reasons.append(f"Грейд «{category.grade.name}» в допустимом диапазоне потребности")
+        elif need_grade_ids:
+            reasons.append(f"Грейд «{category.grade.name}» вне диапазона потребности")
 
         # --- 60%: компетенции, нужные вакансии (навыки потребности → блоки теста) ---
         attempt = confirming.get(category.source_attempt_id) if category.source_attempt_id else None
@@ -212,6 +241,7 @@ async def match_candidates_for_need(
                 experience_months=profile.experience_months,
                 about=profile.about,
                 skills=[s.name for s in profile.skills],
+                test_passed=attempt is not None,
                 score=score,
                 score_breakdown={
                     "competencies": competency_points,
@@ -223,5 +253,6 @@ async def match_candidates_for_need(
             )
         )
 
+    # Прошедшие тест — по баллу; непрошедшие (балл 0) — в конце.
     results.sort(key=lambda m: (m.score, m.experience_months), reverse=True)
     return results

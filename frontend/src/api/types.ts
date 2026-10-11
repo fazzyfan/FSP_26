@@ -223,6 +223,8 @@ export interface MatchCandidate {
   // Резюме кандидата (публичная часть)
   about: string | null;
   skills: string[];
+  // Прошёл ли кандидат тест (подтверждённая категория)
+  test_passed: boolean;
   score: number;
   score_breakdown: ScoreBreakdown;
   matched_skills: string[];

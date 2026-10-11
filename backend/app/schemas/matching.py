@@ -25,6 +25,8 @@ class MatchCandidateOut(BaseModel):
     # Резюме кандидата (публичная часть, без контактов — FR-26)
     about: str | None = None
     skills: list[str] = []
+    # Прошёл ли кандидат тест (есть подтверждённая категория с успешной попыткой)
+    test_passed: bool = False
     score: int
     score_breakdown: ScoreBreakdown
     matched_skills: list[str]

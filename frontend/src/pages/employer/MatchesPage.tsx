@@ -20,6 +20,8 @@ export function MatchesPage() {
   const [salaryTo, setSalaryTo] = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+  // Ошибки полей формы приглашения: видимая подсветка вместо браузерной валидации
+  const [fieldErrors, setFieldErrors] = useState<{ from?: string; to?: string; message?: string }>({});
   // Кандидаты с открытым приглашением компании (status=pending): повторная отправка
   // возможна только после отзыва приглашения во вкладке «Приглашения».
   const [invitedCandidates, setInvitedCandidates] = useState<Set<string>>(new Set());
@@ -81,16 +83,14 @@ export function MatchesPage() {
     const candidateId = inviteFor;
     const from = Number(salaryFrom);
     const to = Number(salaryTo);
-    if (!salaryFrom || !salaryTo || from <= 0 || to <= 0) {
-      setError("Укажите положительную зарплатную вилку (от и до).");
-      return;
-    }
-    if (from > to) {
-      setError("Нижняя граница вилки не может превышать верхнюю.");
-      return;
-    }
-    if (message.trim().length < 10) {
-      setError("Опишите условия приглашения (не менее 10 символов).");
+    const fe: { from?: string; to?: string; message?: string } = {};
+    if (!salaryFrom || from <= 0) fe.from = "Укажите положительную сумму";
+    if (!salaryTo || to <= 0) fe.to = "Укажите положительную сумму";
+    if (from > to) fe.to = "Не может быть меньше «от»";
+    if (message.trim().length < 10) fe.message = "Не менее 10 символов";
+    setFieldErrors(fe);
+    if (Object.keys(fe).length > 0) {
+      setError("Проверьте выделенные поля формы приглашения.");
       return;
     }
     setSending(true);
@@ -108,6 +108,7 @@ export function MatchesPage() {
       setSalaryFrom("");
       setSalaryTo("");
       setMessage("");
+      setFieldErrors({});
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Не удалось отправить приглашение");
     } finally {
@@ -176,7 +177,8 @@ export function MatchesPage() {
         </div>
         <p className="muted">
           Балл подбора: 60% — компетенции, 30% — результат теста, 10% — достижения ФСП.
-          Неподходящие специализации и грейды исключены. Контакты откроются только после принятия приглашения.
+          Показываются все опубликованные кандидаты; прохождение теста указано отдельно.
+          Контакты откроются только после принятия приглашения.
         </p>
         {error && <div className="alert alert-error">{error}</div>}
       </div>
@@ -197,9 +199,15 @@ export function MatchesPage() {
         <div className="card" key={m.candidate_id}>
           <div className="row space-between">
             <div>
-              <h3>{m.full_name}</h3>
+              <h3>
+                {m.full_name}{" "}
+                <span className={`badge ${m.test_passed ? "badge-ok" : "badge-muted"}`}>
+                  {m.test_passed ? "Прошёл тест" : "Тест не пройден"}
+                </span>
+              </h3>
               <p className="muted">
-                {m.specialization_name} · {m.grade_name} · стаж {m.experience_months} мес.
+                {m.specialization_name || "Категория не подтверждена"}
+                {m.grade_name ? ` · ${m.grade_name}` : ""} · стаж {m.experience_months} мес.
               </p>
             </div>
             <div className="score" title="Балл подбора">Балл: {m.score}</div>
@@ -225,41 +233,41 @@ export function MatchesPage() {
           )}
 
           {inviteFor === m.candidate_id ? (
-            <form className="form inner-form" onSubmit={sendInvitation}>
+            <form className="form inner-form" onSubmit={sendInvitation} noValidate>
               <div className="grid-2">
-                <label>
+                <label className={fieldErrors.from ? "invalid" : ""}>
                   Зарплата от, ₽ *
                   <input
                     type="number"
                     min={1}
-                    required
                     placeholder="120000"
                     value={salaryFrom}
                     onChange={(e) => setSalaryFrom(e.target.value)}
                   />
+                  {fieldErrors.from && <span className="field-error">{fieldErrors.from}</span>}
                 </label>
-                <label>
+                <label className={fieldErrors.to ? "invalid" : ""}>
                   Зарплата до, ₽ *
                   <input
                     type="number"
                     min={1}
-                    required
                     placeholder="180000"
                     value={salaryTo}
                     onChange={(e) => setSalaryTo(e.target.value)}
                   />
+                  {fieldErrors.to && <span className="field-error">{fieldErrors.to}</span>}
                 </label>
               </div>
-              <label>
+              <label className={fieldErrors.message ? "invalid" : ""}>
                 Условия приглашения (обязательно, ≥ 10 символов)
                 <textarea
                   rows={2}
                   maxLength={2000}
-                  required
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder="Задачи, формат работы, бонусы — что предлагает компания"
                 />
+                {fieldErrors.message && <span className="field-error">{fieldErrors.message}</span>}
               </label>
               <div className="row">
                 <button className="btn btn-primary" disabled={sending}>
@@ -279,7 +287,13 @@ export function MatchesPage() {
               ✓ Приглашение было отправлено
             </button>
           ) : (
-            <button className="btn btn-primary" onClick={() => setInviteFor(m.candidate_id)}>
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setFieldErrors({});
+                setInviteFor(m.candidate_id);
+              }}
+            >
               Пригласить
             </button>
           )}
