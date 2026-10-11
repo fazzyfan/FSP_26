@@ -18,7 +18,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,7 @@ from app.models.account import Account, AccountStatus
 from app.models.assessment import ConfirmedCategory, TestAttempt, TestAttemptStatus
 from app.models.candidate import CandidateProfile
 from app.models.employer import EmployerNeed
+from app.models.invitation import Invitation, InvitationStatus
 from app.models.reference import Grade
 from app.services import fsp as fsp_service
 
@@ -110,6 +111,14 @@ async def match_candidates_for_need(
         .where(
             CandidateProfile.is_published.is_(True),
             Account.status == AccountStatus.ACTIVE,
+            # Кандидаты, уже принявшие приглашение этой компании, из подбора
+            # исключаются: повторное приглашение им недоступно (одно открытое
+            # приглашение на пару company+candidate, FR-23).
+            ~exists().where(
+                Invitation.company_id == need.company_id,
+                Invitation.candidate_id == CandidateProfile.id,
+                Invitation.status == InvitationStatus.ACCEPTED,
+            ),
         )
     )
     if grade_code is not None:
