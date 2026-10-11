@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useAuth } from "../auth/AuthContext";
 
 const steps = [
   {
@@ -19,6 +20,7 @@ const steps = [
 ];
 
 export function HomePage() {
+  const { user } = useAuth();
   return (
     <div className="home">
       <section className="hero">
@@ -27,14 +29,16 @@ export function HomePage() {
           Кандидат подтверждает уровень тестом. Работодатель находит подходящих людей и первым
           отправляет предложение с зарплатой.
         </p>
-        <div className="hero-actions">
-          <Link to="/register" className="btn btn-primary">
-            Начать как кандидат
-          </Link>
-          <Link to="/register?role=employer" className="btn btn-outline">
-            Начать как работодатель
-          </Link>
-        </div>
+        {!user && (
+          <div className="hero-actions">
+            <Link to="/register" className="btn btn-primary">
+              Начать как кандидат
+            </Link>
+            <Link to="/register?role=employer" className="btn btn-outline">
+              Начать как работодатель
+            </Link>
+          </div>
+        )}
       </section>
 
       <section className="steps">

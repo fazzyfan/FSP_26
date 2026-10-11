@@ -78,3 +78,11 @@ export function CabinetLayout({ title, nav }: { title: string; nav: ReactNode })
     </div>
   );
 }
+
+
+
+
+
+
+// candidate@example.com   employer@example.com
+// DemoPass2026
