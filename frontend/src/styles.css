@@ -1,28 +1,31 @@
 /* ============================================================
-   FSP · обратный найм — дизайн в стиле Shopify Editions
-   Тёмный градиентный hero, крупная типографика, яркие акценты.
+   FSP · обратный найм — тёмная тема в стиле Linear / Framer
+   Тёмные панели, индиго-акценты, стилизованные вкладки,
+   плавные анимации (без багов).
    ============================================================ */
 
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --border: #e6e8ec;
-  --text: #101828;
-  --muted: #667085;
-  --primary: #6d28d9;
-  --primary-dark: #4c1d95;
-  --accent: #db2777;
-  --accent2: #f97316;
-  --gradient: linear-gradient(120deg, #6d28d9 0%, #db2777 55%, #f97316 100%);
-  --gradient-soft: linear-gradient(120deg, rgba(109, 40, 217, 0.08), rgba(219, 39, 119, 0.08));
-  --danger: #dc2626;
-  --success: #059669;
-  --radius: 16px;
+  --bg: #0b0c0e;
+  --panel: #141518;
+  --panel-2: #1a1c20;
+  --border: #26282e;
+  --border-strong: #33363d;
+  --text: #e8e9ec;
+  --muted: #8b909a;
+  --primary: #5e6ad2;
+  --primary-dark: #4a55b8;
+  --accent: #0099ff;
+  --accent2: #7c5cff;
+  --gradient: linear-gradient(120deg, #5e6ad2 0%, #7c5cff 55%, #0099ff 100%);
+  --gradient-soft: linear-gradient(120deg, rgba(94, 106, 210, 0.14), rgba(124, 92, 255, 0.1));
+  --danger: #f87171;
+  --success: #34d399;
+  --radius: 14px;
   --radius-sm: 10px;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.04), 0 8px 24px rgba(16, 24, 40, 0.06);
-  --shadow-lg: 0 12px 40px rgba(16, 24, 40, 0.12);
-  --dark: #0b1020;
-  --dark-soft: #141a2e;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.5);
+  --dark: #08090a;
+  --dark-soft: #101216;
 }
 
 * {
@@ -45,6 +48,37 @@ body {
 h1, h2, h3 {
   letter-spacing: -0.02em;
   line-height: 1.15;
+  color: var(--text);
+}
+
+/* --- Анимации --- */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(94, 106, 210, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(94, 106, 210, 0);
+  }
 }
 
 /* --- Каркас --- */
@@ -62,8 +96,8 @@ h1, h2, h3 {
   align-items: center;
   justify-content: space-between;
   padding: 14px 28px;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
+  background: rgba(11, 12, 14, 0.8);
+  backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
 }
 
@@ -73,6 +107,11 @@ h1, h2, h3 {
   color: var(--text);
   text-decoration: none;
   letter-spacing: -0.02em;
+  transition: opacity 0.15s ease;
+}
+
+.brand:hover {
+  opacity: 0.85;
 }
 
 .brand::before {
@@ -94,6 +133,11 @@ h1, h2, h3 {
   color: var(--text);
   text-decoration: none;
   font-weight: 500;
+  transition: color 0.15s ease;
+}
+
+.topnav a:hover {
+  color: var(--primary);
 }
 
 .topnav .muted {
@@ -106,14 +150,16 @@ h1, h2, h3 {
   max-width: 1120px;
   margin: 0 auto;
   padding: 28px 24px 48px;
+  animation: fadeIn 0.3s ease both;
 }
 
 .footer {
   padding: 22px 24px;
   text-align: center;
-  color: #9aa3b2;
+  color: #6b7280;
   font-size: 13px;
   background: var(--dark);
+  border-top: 1px solid var(--border);
 }
 
 /* --- Кнопки --- */
@@ -127,33 +173,37 @@ h1, h2, h3 {
   cursor: pointer;
   text-decoration: none;
   text-align: center;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease,
+    border-color 0.15s ease, color 0.15s ease;
 }
 
 .btn-primary {
   background: var(--gradient);
   color: #fff;
-  box-shadow: 0 6px 18px rgba(109, 40, 217, 0.28);
+  box-shadow: 0 6px 20px rgba(94, 106, 210, 0.35);
 }
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 10px 26px rgba(109, 40, 217, 0.36);
+  box-shadow: 0 10px 28px rgba(94, 106, 210, 0.45);
 }
 
 .btn-outline {
   background: transparent;
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .btn-outline:hover:not(:disabled) {
-  background: rgba(109, 40, 217, 0.06);
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(94, 106, 210, 0.08);
 }
 
 .btn-success {
-  background: var(--success);
-  color: #fff;
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--success);
+  border-color: rgba(52, 211, 153, 0.4);
 }
 
 .btn-success:disabled {
@@ -167,7 +217,7 @@ h1, h2, h3 {
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: rgba(16, 24, 40, 0.05);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .btn-sm {
@@ -177,7 +227,7 @@ h1, h2, h3 {
 }
 
 .btn:disabled {
-  opacity: 0.55;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
@@ -198,10 +248,12 @@ h1, h2, h3 {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 24px;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  animation: fadeInUp 0.35s ease both;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .card:hover {
+  border-color: var(--border-strong);
   box-shadow: var(--shadow-lg);
 }
 
@@ -229,9 +281,14 @@ textarea {
   border-radius: var(--radius-sm);
   font-size: 15px;
   font-family: inherit;
-  background: #fff;
+  background: var(--panel-2);
   color: var(--text);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #5b6068;
 }
 
 input:focus,
@@ -239,7 +296,8 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.12);
+  box-shadow: 0 0 0 4px rgba(94, 106, 210, 0.18);
+  background: var(--panel-2);
 }
 
 .muted {
@@ -252,7 +310,7 @@ textarea:focus {
   margin: 8px 0 4px;
   padding: 10px 14px;
   background: var(--gradient-soft);
-  border: 1px solid rgba(109, 40, 217, 0.12);
+  border: 1px solid rgba(94, 106, 210, 0.25);
   border-radius: var(--radius-sm);
   font-size: 14px;
 }
@@ -273,15 +331,15 @@ textarea:focus {
 }
 
 .badge-ok {
-  background: #ecfdf5;
+  background: rgba(52, 211, 153, 0.12);
   color: var(--success);
-  border: 1px solid #a7f3d0;
+  border: 1px solid rgba(52, 211, 153, 0.35);
 }
 
 .badge-muted {
-  background: #f2f4f7;
+  background: rgba(255, 255, 255, 0.05);
   color: var(--muted);
-  border: 1px solid #e4e7ec;
+  border: 1px solid var(--border);
 }
 
 /* Подсветка полей формы приглашения */
@@ -292,7 +350,7 @@ label.invalid textarea {
 
 label.invalid input:focus,
 label.invalid textarea:focus {
-  box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.12);
+  box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.15);
   border-color: var(--danger);
 }
 
@@ -315,7 +373,7 @@ label.invalid textarea:focus {
   padding: 12px 16px;
   font-size: 14px;
   color: var(--muted);
-  background: #fafbfc;
+  background: var(--panel-2);
 }
 
 .consent-text p {
@@ -327,24 +385,25 @@ label.invalid textarea:focus {
   padding: 12px 16px;
   font-size: 14px;
   font-weight: 500;
+  animation: fadeInUp 0.25s ease both;
 }
 
 .alert-error {
-  background: #fef2f2;
+  background: rgba(248, 113, 113, 0.1);
   color: var(--danger);
-  border: 1px solid #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.3);
 }
 
 .alert-success {
-  background: #ecfdf5;
+  background: rgba(52, 211, 153, 0.1);
   color: var(--success);
-  border: 1px solid #a7f3d0;
+  border: 1px solid rgba(52, 211, 153, 0.3);
 }
 
 .alert-info {
-  background: #f5f3ff;
-  color: #5b21b6;
-  border: 1px solid #ddd6fe;
+  background: rgba(94, 106, 210, 0.12);
+  color: #a5b4fc;
+  border: 1px solid rgba(94, 106, 210, 0.35);
 }
 
 /* --- Авторизация --- */
@@ -366,10 +425,11 @@ label.invalid textarea:focus {
 .segmented {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  background: #f2f4f7;
+  gap: 6px;
+  background: var(--panel-2);
   padding: 5px;
   border-radius: 12px;
+  border: 1px solid var(--border);
 }
 
 .seg {
@@ -385,23 +445,25 @@ label.invalid textarea:focus {
 }
 
 .seg.active {
-  background: #fff;
-  color: var(--primary);
-  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.08);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
 }
 
 /* --- Лендинг --- */
 .hero {
   position: relative;
   text-align: center;
-  padding: 72px 24px 64px;
+  padding: 76px 24px 68px;
   border-radius: 24px;
   background:
-    radial-gradient(900px 420px at 15% -10%, rgba(109, 40, 217, 0.55), transparent 60%),
-    radial-gradient(800px 400px at 85% -20%, rgba(219, 39, 119, 0.45), transparent 60%),
-    linear-gradient(160deg, #0b1020 0%, #141a2e 60%, #1c1430 100%);
+    radial-gradient(900px 420px at 15% -10%, rgba(94, 106, 210, 0.4), transparent 60%),
+    radial-gradient(800px 400px at 85% -20%, rgba(0, 153, 255, 0.28), transparent 60%),
+    linear-gradient(160deg, #0a0b0d 0%, #101216 60%, #0d0f1a 100%);
   color: #fff;
   overflow: hidden;
+  border: 1px solid var(--border);
+  animation: fadeIn 0.5s ease both;
 }
 
 .hero::after {
@@ -409,7 +471,7 @@ label.invalid textarea:focus {
   position: absolute;
   inset: auto -10% -40% -10%;
   height: 60%;
-  background: radial-gradient(600px 300px at 50% 100%, rgba(249, 115, 22, 0.25), transparent 70%);
+  background: radial-gradient(600px 300px at 50% 100%, rgba(124, 92, 255, 0.22), transparent 70%);
   pointer-events: none;
 }
 
@@ -422,13 +484,13 @@ label.invalid textarea:focus {
   display: inline-block;
   padding: 6px 16px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #e9d5ff;
+  color: #a5b4fc;
   margin-bottom: 20px;
 }
 
@@ -437,10 +499,11 @@ label.invalid textarea:focus {
   font-weight: 800;
   margin: 0 auto 16px;
   max-width: 860px;
+  color: #fff;
 }
 
 .hero h1 .grad {
-  background: linear-gradient(100deg, #a78bfa, #f472b6 55%, #fb923c);
+  background: linear-gradient(100deg, #818cf8, #38bdf8 55%, #a78bfa);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -448,7 +511,7 @@ label.invalid textarea:focus {
 
 .lead {
   font-size: 19px;
-  color: #cbd5e1;
+  color: #9aa3b2;
   max-width: 720px;
   margin: 0 auto 32px;
 }
@@ -461,16 +524,18 @@ label.invalid textarea:focus {
 }
 
 .hero-actions .btn-primary {
-  box-shadow: 0 8px 24px rgba(219, 39, 119, 0.4);
+  box-shadow: 0 8px 26px rgba(94, 106, 210, 0.45);
 }
 
 .hero-actions .btn-outline {
-  border-color: rgba(255, 255, 255, 0.4);
-  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #e5e7eb;
 }
 
 .hero-actions .btn-outline:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #fff;
 }
 
 .steps {
@@ -495,8 +560,9 @@ label.invalid textarea:focus {
   justify-content: center;
   font-weight: 800;
   font-size: 17px;
-  box-shadow: 0 6px 16px rgba(109, 40, 217, 0.3);
+  box-shadow: 0 6px 18px rgba(94, 106, 210, 0.35);
   margin-bottom: 14px;
+  animation: glowPulse 3s ease-in-out infinite;
 }
 
 .step h3 {
@@ -513,8 +579,8 @@ label.invalid textarea:focus {
 .demo-note {
   margin-top: 20px;
   background: var(--dark-soft);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #e5e7eb;
+  border: 1px solid var(--border);
+  color: #cbd5e1;
 }
 
 .demo-note h3 {
@@ -523,7 +589,7 @@ label.invalid textarea:focus {
 }
 
 .demo-note code {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   color: #fbbf24;
   padding: 2px 8px;
   border-radius: 6px;
@@ -531,13 +597,14 @@ label.invalid textarea:focus {
 }
 
 code {
-  background: #eef2f6;
+  background: rgba(255, 255, 255, 0.07);
   padding: 2px 6px;
   border-radius: 6px;
   font-size: 13px;
+  color: #e2e8f0;
 }
 
-/* --- Кабинеты --- */
+/* --- Кабинеты: вкладки --- */
 .cabinet {
   flex: 1;
   display: flex;
@@ -558,28 +625,30 @@ code {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: 12px;
   box-shadow: var(--shadow);
 }
 
 .nav-link {
   padding: 11px 14px;
   border-radius: var(--radius-sm);
-  color: var(--text);
+  color: var(--muted);
   text-decoration: none;
   font-size: 14px;
   font-weight: 500;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .nav-link:hover {
-  background: #f2f4f7;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
 }
 
 .nav-link.active {
   background: var(--gradient-soft);
-  color: var(--primary);
+  color: #fff;
   font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(94, 106, 210, 0.45);
 }
 
 .panel {
@@ -620,7 +689,7 @@ code {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 12px 14px;
-  background: #fafbfc;
+  background: var(--panel-2);
 }
 
 .plain-list p {
@@ -648,7 +717,7 @@ code {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: #fff;
+  background: var(--panel);
 }
 
 .question legend {
@@ -666,8 +735,8 @@ code {
 
 .score {
   background: var(--gradient-soft);
-  color: var(--primary);
-  border: 1px solid rgba(109, 40, 217, 0.18);
+  color: #a5b4fc;
+  border: 1px solid rgba(94, 106, 210, 0.35);
   border-radius: var(--radius-sm);
   padding: 6px 14px;
   font-weight: 700;
@@ -675,9 +744,9 @@ code {
 }
 
 .score-danger {
-  background: #fef2f2;
+  background: rgba(248, 113, 113, 0.1);
   color: var(--danger);
-  border-color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.3);
 }
 
 .ok-text {
@@ -686,13 +755,13 @@ code {
 }
 
 .block {
-  border: 1px dashed #c7cbd4;
+  border: 1px dashed var(--border-strong);
   border-radius: var(--radius);
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  background: #fafbfc;
+  background: var(--panel-2);
 }
 
 .block legend {
@@ -703,7 +772,7 @@ code {
 .card.inner {
   margin-top: 12px;
   box-shadow: none;
-  background: #fbfcfe;
+  background: var(--panel-2);
 }
 
 .inner-form {
