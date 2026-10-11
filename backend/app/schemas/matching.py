@@ -22,6 +22,9 @@ class MatchCandidateOut(BaseModel):
     grade_code: str
     grade_name: str
     experience_months: int
+    # Резюме кандидата (публичная часть, без контактов — FR-26)
+    about: str | None = None
+    skills: list[str] = []
     score: int
     score_breakdown: ScoreBreakdown
     matched_skills: list[str]

@@ -58,9 +58,11 @@ class MatchCandidate:
     grade_code: str
     grade_name: str
     experience_months: int
-    score: int
-    score_breakdown: dict[str, float]
-    matched_skills: list[str]
+    about: str | None = None
+    skills: list[str] = field(default_factory=list)
+    score: int = 0
+    score_breakdown: dict[str, float] = field(default_factory=dict)
+    matched_skills: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
 
 
@@ -208,6 +210,8 @@ async def match_candidates_for_need(
                 grade_code=category.grade.code,
                 grade_name=category.grade.name,
                 experience_months=profile.experience_months,
+                about=profile.about,
+                skills=[s.name for s in profile.skills],
                 score=score,
                 score_breakdown={
                     "competencies": competency_points,

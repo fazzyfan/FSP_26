@@ -20,8 +20,26 @@ export function MatchesPage() {
   const [salaryTo, setSalaryTo] = useState("");
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
-  // кандидаты, которым приглашение уже отправлено (кнопка «Приглашение отправлено»)
-  const [sentTo, setSentTo] = useState<Set<string>>(new Set());
+  // Кандидаты с открытым приглашением компании (status=pending): повторная отправка
+  // возможна только после отзыва приглашения во вкладке «Приглашения».
+  const [invitedCandidates, setInvitedCandidates] = useState<Set<string>>(new Set());
+
+  const loadInvites = useCallback(() => {
+    employerApi
+      .listInvitations()
+      .then((list) => {
+        setInvitedCandidates(
+          new Set(list.filter((i) => i.status === "pending").map((i) => i.candidate_id))
+        );
+      })
+      .catch(() => {
+        /* подбор остаётся доступным; статусы приглашений не критичны */
+      });
+  }, []);
+
+  useEffect(() => {
+    void loadInvites();
+  }, [loadInvites]);
 
   const loadNeeds = useCallback(() => {
     employerApi
@@ -84,8 +102,8 @@ export function MatchesPage() {
         salary_to: to,
         message: message.trim(),
       });
-      // Кнопка меняется на «Приглашение отправлено» (до отмены/перезагрузки).
-      setSentTo((prev) => new Set(prev).add(candidateId));
+      // Кандидат помечается как «приглашение было отправлено» (до отзыва).
+      setInvitedCandidates((prev) => new Set(prev).add(candidateId));
       setInviteFor(null);
       setSalaryFrom("");
       setSalaryTo("");
@@ -199,6 +217,13 @@ export function MatchesPage() {
             <p className="muted">Совпавшие навыки: {m.matched_skills.join(", ")}</p>
           )}
 
+          {(m.about || m.skills.length > 0) && (
+            <div className="resume-summary">
+              {m.about && <p>{m.about}</p>}
+              {m.skills.length > 0 && <p className="muted">Навыки: {m.skills.join(", ")}</p>}
+            </div>
+          )}
+
           {inviteFor === m.candidate_id ? (
             <form className="form inner-form" onSubmit={sendInvitation}>
               <div className="grid-2">
@@ -245,9 +270,13 @@ export function MatchesPage() {
                 </button>
               </div>
             </form>
-          ) : sentTo.has(m.candidate_id) ? (
-            <button className="btn btn-success" disabled title="Приглашение отправлено кандидату">
-              ✓ Приглашение отправлено
+          ) : invitedCandidates.has(m.candidate_id) ? (
+            <button
+              className="btn btn-success"
+              disabled
+              title="Отзовите приглашение во вкладке «Приглашения», чтобы отправить снова"
+            >
+              ✓ Приглашение было отправлено
             </button>
           ) : (
             <button className="btn btn-primary" onClick={() => setInviteFor(m.candidate_id)}>

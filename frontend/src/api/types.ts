@@ -220,6 +220,9 @@ export interface MatchCandidate {
   grade_code: string;
   grade_name: string;
   experience_months: number;
+  // Резюме кандидата (публичная часть)
+  about: string | null;
+  skills: string[];
   score: number;
   score_breakdown: ScoreBreakdown;
   matched_skills: string[];
